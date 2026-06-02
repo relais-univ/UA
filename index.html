@@ -708,4 +708,17 @@ auth.onAuthStateChanged(async (user) => {
 });
 
 window.onload = () => {
-    if (!localStorage.getItem('ua_registered'
+    if (!localStorage.getItem('ua_registered')) switchView('profile');
+    else switchView('home');
+};
+
+// Export des fonctions
+Object.assign(window, { 
+    switchView, openSidebar, closeSidebar, openImageModal, closeImageModal, 
+    openMediaModal, closeMediaModal, handleLogout, installApp, startChat, 
+    sendMessage, closeChat, registerUser, previewImage, searchNotes, 
+    postStory, telechargerIA, askAI, showToast 
+});
+</script>
+</body>
+</html>
