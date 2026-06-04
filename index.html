@@ -672,5 +672,43 @@
                             ${s.mediaType === 'video' ? '<i class="fas fa-play absolute inset-0 m-auto text-white text-[8px] bg-black/50 rounded-full w-4 h-4 flex items-center justify-center"></i>' : ''}
                             <img src="${s.mediaUrl}" class="w-full h-full rounded-full object-cover">
                         </div>
-                        <span class="text-[9px] mt-1 block truncate font-medium text-gray-600">${s.
+                        <span class="text-[9px] mt-1 block truncate font-medium text-gray-600">${s.userName}</span>
+                    </div>`;
+            });
+        });
+
+        db.collection("users").orderBy("date", "desc").onSnapshot(snap => updateFriendsList(snap));
+    }
+
+    // Authentification persistante
+    auth.onAuthStateChanged(async (user) => {
+        if (!user) {
+            await auth.signInAnonymously();
+        } else {
+            currentUser = user;
+            const saved = localStorage.getItem('ua_user_data');
+            if (saved) updateProfileUI(JSON.parse(saved));
+            chargerDonneesGlobales();
+        }
+    });
+
+    window.onload = () => {
+        if (!localStorage.getItem('ua_registered')) switchView('profile');
+        else switchView('home');
+    };
+
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; });
+    function installApp() { deferredPrompt ? deferredPrompt.prompt() : showToast("📱 Option -> Ajouter à l'écran d'accueil"); }
+
+    // Exportation globale des scopes pour l'utilisation dans le HTML original
+    Object.assign(window, { 
+        switchView, openSidebar, closeSidebar, openImageModal, closeImageModal, 
+        openMediaModal, closeMediaModal, handleLogout, installApp, startChat, 
+        sendMessage, closeChat, registerUser, previewImage, searchNotes, 
+        postStory, telechargerIA, askAI, showToast 
+    });
+</script>
+</body>
+        </html>
     
