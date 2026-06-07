@@ -257,4 +257,199 @@
         
 
     <!-- Conteneur principal mobile centré -->
-    <main class="max-w-md mx-auto p-4">
+    <main class="max-w-md mx-auto p-4">    // ========== 1. NAVIGATION DE BASE ET OUTILS DE L'INTERFACE ==========
+    function openSidebar() {
+        document.getElementById('sidebar')?.classList.add('open');
+        document.getElementById('sidebarOverlay')?.classList.add('open');
+    }
+
+    function closeSidebar() {
+        document.getElementById('sidebar')?.classList.remove('open');
+        document.getElementById('sidebarOverlay')?.classList.remove('open');
+    }
+
+    function openImageModal(src) {
+        const modal = document.getElementById('imageModal');
+        const img = document.getElementById('modalImage');
+        if (modal && img) {
+            img.src = src;
+            modal.classList.remove('hidden');
+        }
+    }
+
+    function closeImageModal() {
+        document.getElementById('imageModal')?.classList.add('hidden');
+    }
+
+    function handleLogout() {
+        if (confirm("Supprimer vos données ?")) {
+            localStorage.clear();
+            location.reload();
+        }
+    }
+
+    // ========== 2. FIL D'ACTUALITÉ ET SCROLL INFINI ==========
+    async function loadMoreArticles() {
+        if (isLoadingMore || allArticlesLoaded) return;
+        isLoadingMore = true;
+        
+        let q = db.collection("articles").orderBy("createdAt", "desc");
+        if (lastArticleDoc) q = q.startAfter(lastArticleDoc);
+        q = q.limit(5);
+        
+        try {
+            const snap = await q.get();
+            if (snap.empty) {
+                allArticlesLoaded = true;
+                document.getElementById('load-more-container')?.classList.add('hidden');
+                isLoadingMore = false;
+                return;
+            }
+            
+            lastArticleDoc = snap.docs[snap.docs.length - 1];
+            const feed = document.getElementById('news-feed');
+            
+            snap.forEach(doc => {
+                const art = doc.data();
+                const titreArticle = art.title || art.titre || "";
+                const contenuArticle = art.content || art.contenu || art.texte || "";
+                const lienImage = art.imageUrl || art.image || null;
+                const imageHtml = lienImage ? `<img src="${lienImage}" class="w-full h-auto max-h-64 object-cover rounded-xl mb-3 mt-1" onerror="this.style.display='none'">` : '';
+                
+                feed.innerHTML += `
+                    <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 mb-4 text-left">
+                        <div class="p-5">
+                            ${titreArticle ? `<h3 class="font-black text-lg text-gray-800 mb-1">${titreArticle.replace(/</g, '&lt;')}</h3>` : ''}
+                            ${imageHtml}
+                            <p class="text-sm text-gray-600 leading-relaxed">${contenuArticle.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>
+                        </div>
+                    </div>`;
+            });
+            
+            if (snap.docs.length < 5) allArticlesLoaded = true;
+            document.getElementById('load-more-container')?.classList.toggle('hidden', allArticlesLoaded);
+        } catch (err) { console.error(err); }
+        isLoadingMore = false;
+    }
+
+    function loadInitialFeed() {
+        lastArticleDoc = null;
+        allArticlesLoaded = false;
+        const feed = document.getElementById('news-feed');
+        if (feed) feed.innerHTML = '';
+        loadMoreArticles();
+    }
+
+    // ========== 3. ENREGISTREMENT ET GESTION DES PROFILS ==========
+    async function registerUser() {
+        const nom = document.getElementById('reg-nom').value.trim();
+        const prenom = document.getElementById('reg-prenom').value.trim();
+        const filiere = document.getElementById('reg-filiere').value.trim();
+        
+        if (!nom || !prenom) return showToast("⚠️ Nom/Prénom requis");
+        
+        const userData = { 
+            nom: nom.replace(/</g, '&lt;'), 
+            prenom: prenom.replace(/</g, '&lt;'), 
+            filiere: filiere.replace(/</g, '&lt;'), 
+            avatar: document.getElementById('user-img').src || "", 
+            date: firebase.firestore.FieldValue.serverTimestamp() 
+        };
+        
+        localStorage.setItem('ua_user_data', JSON.stringify(userData));
+        localStorage.setItem('ua_registered', 'true');
+        
+        await db.collection("users").doc(currentUser.uid).set(userData);
+        updateProfileUI(userData);
+        showToast("✅ Profil enregistré !");
+        switchView('home');
+    }
+
+    async function compressAndConvertToBase64(file) {
+        const options = { maxSizeMB: 0.2, maxWidthOrHeight: 800, useWebWorker: true };
+        try {
+            const compressedFile = await imageCompression(file, options);
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(compressedFile);
+            });
+        } catch (error) { return null; }
+    }
+
+    async function previewImage(e, instant = false) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        showToast("⚡ Traitement de l'image...");
+        const base64Img = await compressAndConvertToBase64(file);
+        if (!base64Img) return showToast("❌ Échec du traitement de l'image");
+        
+        document.getElementById('temp-avatar').src = base64Img;
+        document.getElementById('user-img').src = base64Img;
+        
+        if (instant && currentUser) {
+            const data = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+            data.avatar = base64Img;
+            await db.collection("users").doc(currentUser.uid).set(data);
+            localStorage.setItem('ua_user_data', JSON.stringify(data));
+            showToast("📸 Photo mise à jour !");
+        }
+    }
+
+    function updateProfileUI(data) {
+        document.getElementById('register-ui').classList.add('hidden');
+        document.getElementById('profile-ui').classList.remove('hidden');
+        document.getElementById('user-full-name').innerText = `${data.prenom || ''} ${data.nom || ''}`;
+        document.getElementById('user-sub').innerText = data.filiere || '';
+        if (data.avatar) document.getElementById('user-img').src = data.avatar;
+    }
+
+    // ========== 4. MESSAGERIE EN TEMPS RÉEL (CHAT) ==========
+    function startChat(amiId, amiNom) {
+        activeChatId = amiId;
+        document.getElementById('chatPartnerName').innerText = amiNom;
+        document.getElementById('chatWindow').classList.remove('hidden');
+        const roomId = [currentUser.uid, amiId].sort().join('_');
+        
+        if (unsubscribeChat) unsubscribeChat();
+        
+        unsubscribeChat = db.collection("messages")
+            .where("roomId", "==", roomId)
+            .orderBy("date", "asc")
+            .onSnapshot(snap => {
+                const box = document.getElementById('chatMessages');
+                if (!box) return;
+                box.innerHTML = "";
+                snap.forEach(doc => {
+                    const m = doc.data();
+                    const isMe = m.senderId === currentUser.uid;
+                    const safeText = (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                    box.innerHTML += `<div class="max-w-[80%] chat-message ${isMe ? 'self-end bg-green-600 text-white rounded-l-2xl rounded-tr-2xl' : 'self-start bg-white border rounded-r-2xl rounded-tl-2xl shadow-sm'} p-3 text-sm">${safeText}</div>`;
+                });
+                box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+            });
+    }
+
+    async function sendMessage() {
+        const input = document.getElementById('chatInput');
+        const text = input.value.trim();
+        if (!text || !activeChatId) return;
+        
+        const roomId = [currentUser.uid, activeChatId].sort().join('_');
+        input.value = "";
+        
+        await db.collection("messages").add({ 
+            roomId, 
+            senderId: currentUser.uid, 
+            text: text.replace(/</g, '&lt;').replace(/>/g, '&gt;'), 
+            date: firebase.firestore.FieldValue.serverTimestamp() 
+        });
+    }
+
+    function closeChat() {
+        document.getElementById('chatWindow').classList.add('hidden');
+        if (unsubscribeChat) unsubscribeChat();
+    }
+    
