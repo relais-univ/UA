@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UA Social - Université de l'Unité Africaine</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" sizes="192x192" href="logo-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="logo-512.png">
+    
+    <!-- Utilitaire indispensable pour compresser les images au format Base64 sur smartphone -->
+    <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.min.js"></script>
+    
+    <!-- Firebase SDK (version classique compatible) -->
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-storage-compat.js"></script>
+    
+    <style>
+        .ua-green { background-color: #008751; }
+        .active-nav { color: #008751 !important; border-top: 3px solid #008751; }
+        .view-section { display: none; }
+        .view-section.active { display: block; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1); }
+        .input-pro { width: 100%; background: #f3f4f6; border-radius: 15px; padding: 12px 15px; border: 2px solid transparent; outline: none; transition: 0.3s; font-size: 14px; }
+        .input-pro:focus { border-color: #008751; background: white; }
+        .ua-logo { background: white; }
+        .ua-logo span { color: #008751 !important; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        #ua-toast { 
+            position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(100px); 
+            background: #1f2937; color: white; padding: 12px 24px; border-radius: 50px; 
+            font-weight: 600; font-size: 13px; z-index: 1000; transition: all 0.4s ease; 
+            opacity: 0; display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 15px rgba(0,0,0,0.3);
+        }
+        #ua-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+
+        .sidebar { position: fixed; top: 0; left: -280px; width: 280px; height: 100%; background: white; z-index: 300; transition: left 0.3s ease; box-shadow: 2px 0 10px rgba(0,0,0,0.1); overflow-y: auto; }
+        .sidebar.open { left: 0; }
+        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 299; display: none; }
+        .sidebar-overlay.open { display: block; }
+        .menu-item { padding: 12px 20px; border-bottom: 1px solid #e5e7eb; cursor: pointer; transition: background 0.2s; }
+        .menu-item:hover { background: #f3f4f6; }
+        
+        .chat-message { animation: messageSlide 0.2s ease; }
+        @keyframes messageSlide { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .load-more-btn { transition: all 0.2s; }
+        .load-more-btn:active { transform: scale(0.98); }
+        
+        .media-modal-content video, .media-modal-content img { max-width: 100%; max-height: 80vh; border-radius: 16px; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans pb-24">
+
+    <!-- Toast de notification -->
+    <div id="ua-toast"><i class="fas fa-info-circle text-yellow-400"></i><span id="toast-message"></span></div>
+
+    <!-- Menu Latéral Glissant -->
+    <div id="sidebarOverlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div id="sidebar" class="sidebar">
+        <div class="ua-green text-white p-4 text-center font-bold">Menu UA</div>
+        <div class="menu-item" onclick="closeSidebar(); switchView('home')"><i class="fas fa-home w-6"></i> Accueil</div>
+        <div class="menu-item" onclick="closeSidebar(); switchView('search')"><i class="fas fa-robot w-6"></i> Assistant IA</div>
+        <div class="menu-item" onclick="closeSidebar(); switchView('notes')"><i class="fas fa-graduation-cap w-6"></i> Mes notes</div>
+        <div class="menu-item" onclick="closeSidebar(); switchView('community')"><i class="fas fa-users w-6"></i> Amis</div>
+        <div class="menu-item" onclick="closeSidebar(); switchView('profile')"><i class="fas fa-user-circle w-6"></i> Mon profil</div>
+        <div class="menu-item" onclick="closeSidebar(); telechargerIA()"><i class="fas fa-download w-6"></i> 📥 Télécharger l'IA</div>
+        <div class="menu-item" onclick="closeSidebar(); handleLogout()"><i class="fas fa-sign-out-alt w-6"></i> Déconnexion</div>
+    </div>
+
+    <!-- En-tête Principal de l'Application -->
+    <header class="ua-green text-white p-4 sticky top-0 z-50 shadow-md flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <i class="fas fa-bars text-xl cursor-pointer hover:text-green-200" onclick="openSidebar()"></i>
+            <div class="ua-logo w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl font-bold"><span>U</span><span>A</span></div>
+            <div>
+                <h1 id="pageTitle" class="text-lg font-bold">Fil d'actualité</h1>
+                <div class="flex items-center gap-1 text-xs"><i id="statusIcon" class="fas fa-circle text-green-400 text-[8px]"></i><span id="statusText" class="text-green-200 text-[10px]">En ligne</span></div>
+            </div>
+        </div>
+        <div class="flex gap-4">
+            <i class="fas fa-bell text-xl"></i>
+            <i class="fas fa-paper-plane text-xl cursor-pointer" onclick="switchView('community')"></i>
+            <button onclick="installApp()" id="installBtn" class="text-sm bg-white text-green-700 px-3 py-1 rounded-full font-bold hover:bg-green-100 transition shadow flex items-center gap-1">⬇️ App</button>
+        </div>
+    </header>
+
+    <!-- Conteneur principal mobile centré -->
+    <main class="max-w-md mx-auto p-4">
+  
