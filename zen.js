@@ -170,3 +170,189 @@ function afficherCitationDuJour() {
         authTxt.innerText = `— ${citation.author}`;
     }
 }
+// ==========================================
+// CONFIGURATION DE L'ESPACE ZEN & LECTEUR INTERACTIF - PARTIE 2
+// ==========================================
+
+function genererCategoriesInterface() {
+    const container = document.getElementById("liste-musiques-container");
+    if (!container) return;
+    container.innerHTML = "";
+    
+    categoriesMusique.forEach(cat => {
+        const catBox = document.createElement("div");
+        catBox.className = "w-full mb-3 border border-gray-100 rounded-xl bg-white shadow-sm overflow-hidden";
+        
+        const headerBtn = document.createElement("button");
+        headerBtn.className = "w-full text-left p-4 flex items-center justify-between bg-white hover:bg-gray-50 active:bg-gray-100 transition-colors focus:outline-none";
+        headerBtn.onclick = () => toggleRepertoireAffichage(cat.id);
+        
+        headerBtn.innerHTML = `
+            <div class="flex items-center gap-3">
+                <span class="text-lg">${cat.icon}</span>
+                <span class="text-xs font-bold text-gray-700">${cat.titre}</span>
+            </div>
+            <i id="arrow-${cat.id}" class="fas fa-chevron-down text-xs text-gray-400 transition-transform duration-200"></i>
+        `;
+        
+        const tracksListDiv = document.createElement("div");
+        tracksListDiv.id = `repertoire-${cat.id}`;
+        tracksListDiv.className = "hidden bg-gray-50 border-t border-gray-50 max-h-64 overflow-y-auto divide-y divide-gray-100";
+        
+        cat.tracks.forEach((track, index) => {
+            const trackItem = document.createElement("div");
+            trackItem.id = `item-piste-${track.id}`;
+            trackItem.className = "p-3 flex items-center justify-between hover:bg-green-50/50 transition-colors cursor-pointer group";
+            trackItem.onclick = (e) => {
+                e.stopPropagation(); 
+                selectionnerEtJouerMorceau(cat.id, index);
+            };
+            
+            trackItem.innerHTML = `
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <span class="text-xxs font-mono text-gray-400 w-4">${String(index + 1).padStart(2, '0')}</span>
+                    <p class="text-xs font-medium text-gray-600 truncate group-hover:text-green-600 transition-colors">${track.title}</p>
+                </div>
+                <div id="status-icon-${track.id}" class="text-green-600 text-xxs pl-2">
+                    <i class="fas fa-play text-gray-300 group-hover:text-green-500 transition-colors"></i>
+                </div>
+            `;
+            tracksListDiv.appendChild(trackItem);
+        });
+        
+        catBox.appendChild(headerBtn);
+        catBox.appendChild(tracksListDiv);
+        container.appendChild(catBox);
+    });
+}
+
+function toggleRepertoireAffichage(catId) {
+    const cibleDiv = document.getElementById(`repertoire-${catId}`);
+    const iconeFleche = document.getElementById(`arrow-${catId}`);
+    
+    if (!cibleDiv) return;
+    
+    const estMasque = cibleDiv.classList.contains("hidden");
+    
+    categoriesMusique.forEach(c => {
+        if (c.id !== catId) {
+            document.getElementById(`repertoire-${c.id}`)?.classList.add("hidden");
+            document.getElementById(`arrow-${c.id}`)?.classList.remove("rotate-180");
+        }
+    });
+    
+    if (estMasque) {
+        cibleDiv.classList.remove("hidden");
+        iconeFleche?.classList.add("rotate-180");
+    } else {
+        cibleDiv.classList.add("hidden");
+        iconeFleche?.classList.remove("rotate-180");
+    }
+}
+
+function selectionnerEtJouerMorceau(catId, trackIndex) {
+    const cibleCat = categoriesMusique.find(c => c.id === catId);
+    if (!cibleCat) return;
+    
+    currentActivePlaylist = cibleCat.tracks;
+    currentTrackIndex = trackIndex;
+    
+    const trackSelectionnee = currentActivePlaylist[currentTrackIndex];
+    trackEnCoursId = trackSelectionnee.id;
+    
+    lancerPisteSpecifique(trackSelectionnee.title, trackSelectionnee.url);
+}
+
+function lancerPisteSpecifique(titre, url) {
+    if (globalAudioElement) {
+        globalAudioElement.pause();
+    }
+    
+    globalAudioElement = new Audio(url);
+    
+    globalAudioElement.play()
+        .then(() => {
+            isAudioPlaying = true;
+            synchroniserLecteurUI(titre);
+        })
+        .catch(err => {
+            console.log("Lecture en attente d'interaction mobile.");
+            isAudioPlaying = false;
+            synchroniserLecteurUI(titre);
+        });
+        
+    globalAudioElement.ontimeupdate = () => {
+        const progressionBarre = document.getElementById("player-progress");
+        if (progressionBarre && globalAudioElement.duration) {
+            const pourcentage = (globalAudioElement.currentTime / globalAudioElement.duration) * 100;
+            progressionBarre.style.width = `${pourcentage}%`;
+        }
+    };
+    
+    globalAudioElement.onended = () => {
+        currentTrackIndex++;
+        if (currentTrackIndex < currentActivePlaylist.length) {
+            const nextTrack = currentActivePlaylist[currentTrackIndex];
+            trackEnCoursId = nextTrack.id;
+            lancerPisteSpecifique(nextTrack.title, nextTrack.url);
+        } else {
+            isAudioPlaying = false;
+            trackEnCoursId = null;
+            document.getElementById("zen-player-ui")?.classList.add("hidden");
+            rafraichirIconesRepertoire();
+        }
+    };
+}
+
+function synchroniserLecteurUI(titre) {
+    const playerUI = document.getElementById("zen-player-ui");
+    const labelTitre = document.getElementById("current-track-title");
+    const declencheurPlay = document.getElementById("player-play-trigger");
+    
+    if (playerUI) playerUI.classList.remove("hidden");
+    if (labelTitre) labelTitre.innerText = titre;
+    if (declencheurPlay) {
+        declencheurPlay.innerHTML = isAudioPlaying ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
+    }
+    
+    rafraichirIconesRepertoire();
+}
+
+function rafraichirIconesRepertoire() {
+    categoriesMusique.forEach(cat => {
+        cat.tracks.forEach(track => {
+            const iconDiv = document.getElementById(`status-icon-${track.id}`);
+            const itemRow = document.getElementById(`item-piste-${track.id}`);
+            if (iconDiv && itemRow) {
+                if (track.id === trackEnCoursId) {
+                    itemRow.classList.add("bg-green-50");
+                    iconDiv.innerHTML = isAudioPlaying 
+                        ? '<i class="fas fa-volume-up text-green-600 animate-pulse"></i>' 
+                        : '<i class="fas fa-pause text-green-600"></i>';
+                } else {
+                    itemRow.classList.remove("bg-green-50");
+                    iconDiv.innerHTML = '<i class="fas fa-play text-gray-300 group-hover:text-green-500"></i>';
+                }
+            }
+        });
+    });
+}
+
+function toggleZenPlayback() {
+    if (!globalAudioElement) return;
+    
+    if (isAudioPlaying) {
+        globalAudioElement.pause();
+        isAudioPlaying = false;
+    } else {
+        globalAudioElement.play().catch(() => {});
+        isAudioPlaying = true;
+    }
+    
+    synchroniserLecteurUI(currentActivePlaylist[currentTrackIndex]?.title || "Musique");
+}
+
+document.addEventListener("DOMContentLoaded", initialiserEspaceZen);
+if (document.readyState === "interactive" || document.readyState === "complete") {
+    initialiserEspaceZen();
+    }
