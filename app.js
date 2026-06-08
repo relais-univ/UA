@@ -464,4 +464,84 @@ function updateFriendsList(users) {
         list.innerHTML += `
             <div class="flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer text-left" onclick="startChat('${doc.id}', '${u.prenom} ${u.nom}')">
                 <img src="${u.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-12 h-12 rounded-full object-cover border-2 border-green-500 shadow-sm">
-                <d
+                <d                <div class="flex-1">
+                    <div class="font-bold text-sm text-gray-800">${u.prenom || ''} ${u.nom || ''}</div>
+                    <div class="text-xs text-gray-400 truncate">${u.filiere || 'Étudiant'}</div>
+                </div>
+                <i class="fas fa-comment-alt text-green-600 opacity-60"></i>
+            </div>`;
+    });
+}
+
+// ========== 9. INITIALISATION ET ÉCOUTE DE L'ÉTAT DE CONNEXION ==========
+
+// 1. Écouteur Firebase pour suivre la connexion de l'utilisateur
+firebase.auth().onAuthStateChanged(async (user) => {
+    const statusIcon = document.getElementById('statusIcon');
+    const statusText = document.getElementById('statusText');
+
+    if (user) {
+        currentUser = user;
+        if (statusIcon) statusIcon.className = "fas fa-circle text-green-400 text-[8px]";
+        if (statusText) statusText.innerText = "En ligne";
+
+        // Récupération du profil de l'étudiant
+        const doc = await db.collection("users").doc(user.uid).get();
+        if (doc.exists) {
+            const userData = doc.data();
+            localStorage.setItem('ua_user_data', JSON.stringify(userData));
+            updateProfileUI(userData);
+        } else {
+            // S'il n'a pas encore de profil, on l'envoie sur l'onglet Profil pour s'enregistrer
+            switchView('profile');
+            showToast("👋 Créez votre profil pour continuer !");
+        }
+    } else {
+        currentUser = null;
+        if (statusIcon) statusIcon.className = "fas fa-circle text-gray-400 text-[8px]";
+        if (statusText) statusText.innerText = "Hors ligne";
+        
+        // Connexion anonyme automatique pour naviguer librement
+        firebase.auth().signInAnonymously().catch(err => console.error("Erreur Auth:", err));
+    }
+});
+
+// 2. Synchronisation en temps réel de la liste des membres
+db.collection("users").orderBy("date", "desc").onSnapshot(snap => {
+    updateFriendsList(snap);
+}, err => console.error(err));
+
+// 3. Synchronisation en temps réel des stories (24h)
+db.collection("stories").orderBy("date", "desc").onSnapshot(snap => {
+    const container = document.getElementById('stories-container');
+    if (!container) return;
+    container.innerHTML = "";
+    
+    snap.forEach(doc => {
+        const s = doc.data();
+        const badgeMedia = s.mediaType === 'video' ? '<i class="fas fa-video absolute bottom-1 right-1 text-[10px] text-white bg-black/50 p-1 rounded-sm"></i>' : '';
+        
+        container.innerHTML += `
+            <div class="flex-shrink-0 w-16 text-center cursor-pointer relative" onclick="openMediaModal('${s.mediaUrl}', '${s.mediaType}')">
+                <div class="w-14 h-14 rounded-full border-2 border-green-500 p-[2px] mx-auto bg-white shadow-sm">
+                    <img src="${s.mediaType === 'video' ? 'https://cdn-icons-png.flaticon.com/512/1179/1179069.png' : s.mediaUrl}" class="w-full h-full rounded-full object-cover">
+                </div>
+                ${badgeMedia}
+                <span class="text-[9px] mt-1 block truncate font-medium text-gray-600">${s.userName}</span>
+            </div>`;
+    });
+}, err => console.error(err));
+
+// 4. Lancement des fonctions au chargement de la page
+document.addEventListener("DOMContentLoaded", () => {
+    // Force l'affichage initial sur l'onglet d'accueil
+    switchView('home');
+    
+    // Lance l'Espace Zen (Citations et Musiques)
+    afficherCitationDuJour();
+    genererListeMusiques();
+    
+    // Nettoie les anciennes stories en arrière-plan
+    supprimerAnciennesStories().catch(err => console.error(err));
+});
+
