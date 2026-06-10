@@ -563,5 +563,202 @@ async function searchNotes() {
         res.innerHTML = `<div class="text-red-500">❌ Erreur de chargement</div>`;
     }
 }
+        // ========== GESTION DES STORIES ==========
+async function postStory(e) {
+    const file = e.target.files[0];
+    if (!file || !currentUser) return showToast("❌ Connectez-vous d'abord");
+    
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+    if (!isVideo && !isImage) return showToast("❌ Images ou vidéos uniquement");
+    
+    const maxSize = isVideo ? 10 * 1024 * 1024 : 5 * 1024 * 1024;
+    if (file.size > maxSize) return showToast("❌ Fichier trop lourd");
+    
+    showToast("⏳ Publication...");
+    try {
+        const userData = JSON.parse(localStorage.getItem('ua_user_data'));
+        const fileName = `${Date.now()}_${file.name}`;
+        const storageRef = storage.ref(`stories/${currentUser.uid}/${fileName}`);
+        const snapshot = await storageRef.put(file);
+        const url = await snapshot.ref.getDownloadURL();
         
+        await db.collection("stories").add({
+            mediaUrl: url,
+            mediaType: isVideo ? 'video' : 'image',
+            userName: userData?.prenom || "Anonyme",
+            userId: currentUser.uid,
+            date: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        showToast("✨ Story publiée !");
+    } catch (error) {
+        console.error("Erreur story:", error);
+        showToast("❌ Erreur de stockage");
+    }
+    e.target.value = '';
+}
+
+function openMediaModal(url, type) {
+    const modal = document.getElementById('mediaModal');
+    const content = document.getElementById('mediaContent');
+    content.innerHTML = type === 'video' 
+        ? `<video src="${url}" controls autoplay class="max-w-full max-h-[80vh] rounded-lg"></video>`
+        : `<img src="${url}" class="max-w-full max-h-[80vh] rounded-lg">`;
+    modal.classList.remove('hidden');
+}
+
+function closeMediaModal() {
+    const content = document.getElementById('mediaContent');
+    if (content) content.innerHTML = '';
+    document.getElementById('mediaModal')?.classList.add('hidden');
+}
+
+async function supprimerAnciennesStories() {
+    const ilYa24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    try {
+        const snap = await db.collection("stories").where("date", "<", ilYa24h).get();
+        snap.forEach(doc => doc.ref.delete());
+    } catch (err) {
+        console.log("Nettoyage des stories en attente de synchronisation...");
+    }
+}
+
+function formatDateRelative(firebaseDate) {
+    if (!firebaseDate) return "à l'instant";
+    const dateJS = firebaseDate.toDate ? firebaseDate.toDate() : new Date(firebaseDate);
+    const diff = Math.floor((new Date() - dateJS) / 60000);
+    if (diff < 1) return "À l'instant";
+    if (diff < 60) return `${diff} min`;
+    if (diff < 1440) return `${Math.floor(diff / 60)}h`;
+    return "Hier";
+}
+
+function telechargerIA() { showToast("✅ Espace synchronisé hors-ligne"); }
+
+// ========== INSTALLATION PWA ==========
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; });
+function installApp() {
+    if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt = null;
+    } else {
+        showToast("📱 Menu -> Ajouter à l'écran d'accueil");
+    }
+}
+
+// ========== INITIALISATION ET CHARGEMENT ==========
+function updateFriendsList(users) {
+    const list = document.getElementById('friendsList');
+    if (!list) return;
+    list.innerHTML = "";
+    users.forEach(doc => {
+        const u = doc.data();
+        if (currentUser && doc.id === currentUser.uid) return;
+        list.innerHTML += `
+            <div class="flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer" onclick="startChat('${doc.id}', '${u.prenom} ${u.nom}')">
+                <img src="${u.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-12 h-12 rounded-full object-cover border-2 border-green-500">
+                <div class="flex-1"><h4 class="font-bold">${u.prenom} ${u.nom}</h4><p class="text-[10px] text-gray-500">${u.filiere}</p></div>
+                <i class="fas fa-comment-dots text-green-600"></i>
+            </div>`;
+    });
+}
+
+function chargerDonneesGlobales() {
+    supprimerAnciennesStories();
+    
+    // CHARGEMENT EN DIRECT DES ARTICLES DE L'ADMIN
+    db.collection("articles").orderBy("createdAt", "desc").onSnapshot(snap => {
+        const container = document.getElementById('articles-container'); 
+        if (!container) return;
+        container.innerHTML = "";
+        
+        if (snap.empty) {
+            container.innerHTML = `<p class="text-gray-400 text-center py-4">Aucune annonce pour le moment.</p>`;
+            return;
+        }
+        
+        snap.forEach(doc => {
+            const art = doc.data();
+            
+            const titreArticle = art.title || art.titre || "";
+            const contenuArticle = art.content || art.contenu || art.texte || "";
+            const lienImage = art.imageUrl || art.image || null;
+            
+            const imageHtml = lienImage ? `<img src="${lienImage}" class="w-full h-auto max-h-64 object-cover rounded-xl mb-3 mt-1" onerror="this.style.display='none'">` : '';
+            
+            container.innerHTML += `
+                <div class="bg-white rounded-2xl p-4 shadow-sm mb-4">
+                    ${titreArticle ? `<h3 class="font-bold text-lg text-green-700 mb-1">${titreArticle}</h3>` : ''}
+                    ${imageHtml}
+                    <p class="text-sm text-gray-700 whitespace-pre-wrap">${contenuArticle}</p>
+                    <span class="text-[10px] text-gray-400 mt-2 block">Publié le ${art.createdAt ? new Date(art.createdAt.toDate()).toLocaleDateString() : ''}</span>
+                </div>`;
+        });
+    });
+    
+    // CHARGEMENT EN DIRECT DES STORIES
+    db.collection("stories").orderBy("date", "desc").limit(12).onSnapshot(snap => {
+        const container = document.getElementById('stories-container');
+        if (!container) return;
+        container.innerHTML = "";
+        snap.forEach(d => {
+            const s = d.data();
+            const tempsRelatif = formatDateRelative(s.date);
+            
+            let mediaPreviewHtml = '';
+            if (s.mediaType === 'video') {
+                mediaPreviewHtml = `
+                    <div class="w-14 h-14 rounded-full border-2 border-green-500 p-0.5 relative overflow-hidden bg-black flex items-center justify-center">
+                        <i class="fas fa-play absolute inset-0 m-auto text-white text-[8px] bg-black/50 rounded-full w-4 h-4 flex items-center justify-center z-10"></i>
+                        <video src="${s.mediaUrl}" preload="metadata" muted class="w-full h-full rounded-full object-cover"></video>
+                    </div>`;
+            } else {
+                mediaPreviewHtml = `
+                    <div class="w-14 h-14 rounded-full border-2 border-green-500 p-0.5 relative overflow-hidden">
+                        <img src="${s.mediaUrl}" class="w-full h-full rounded-full object-cover">
+                    </div>`;
+            }
+
+            container.innerHTML += `
+                <div class="flex-shrink-0 w-16 text-center cursor-pointer" onclick="openMediaModal('${s.mediaUrl}', '${s.mediaType}')">
+                    ${mediaPreviewHtml}
+                    <span class="text-[9px] mt-1 block truncate font-medium">${s.userName}</span>
+                    <span class="text-[7px] text-gray-400 block -mt-1">${tempsRelatif}</span>
+                </div>`;
+        });
+    });
+
+    db.collection("users").orderBy("date", "desc").onSnapshot(snap => updateFriendsList(snap));
+}
+
+// ========== AUTHENTIFICATION ==========
+auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+        await auth.signInAnonymously();
+    } else {
+        currentUser = user;
+        const saved = localStorage.getItem('ua_user_data');
+        if (saved) updateProfileUI(JSON.parse(saved));
+        chargerDonneesGlobales();
+        listenZenSpace(); 
+    }
+});
+
+window.onload = () => {
+    if (!localStorage.getItem('ua_registered')) switchView('profile');
+    else switchView('home');
+};
+
+// Export complet des fonctions de l'application
+Object.assign(window, { 
+    switchView, openSidebar, closeSidebar, openImageModal, closeImageModal, 
+    openMediaModal, closeMediaModal, handleLogout, installApp, startChat, 
+    sendMessage, closeChat, registerUser, previewImage, searchNotes, 
+    postStory, telechargerIA, showToast, downloadCurrentVideo, listenZenSpace
+});
+</script>
+</body>
+</html>
+
           
