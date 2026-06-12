@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+tu<!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
@@ -84,4 +84,346 @@
             setTimeout(() => t.classList.remove('show'), 3000);
         }
     </script>
+    // Configuration Firebase Active - Projet argon-shore-02gpt
+const firebaseConfig = {
+    apiKey: "AIzaSyAeN0FgegSGIbgeTTczRJrrwxDhaQqNKUo",
+    authDomain: "argon-shore-02gpt.firebaseapp.com",
+    projectId: "argon-shore-02gpt",
+    storageBucket: "argon-shore-02gpt.firebasestorage.app",
+    messagingSenderId: "285764787960",
+    appId: "1:285764787960:web:25e8df238c7fc51c7fe50d"
+};
+
+// Initialisation Firebase - Version CORRIGÉE
+if (!firebase.apps.length) {
+    firebase.initializeApp(firebaseConfig);
+}
+const db = firebase.firestore();
+const auth = firebase.auth();
+const storage = firebase.storage();
+
+// Variables globales
+let currentUser = null;
+let activeChatId = null;
+let unsubscribeChat = null;
+let lastArticleDoc = null;
+let isLoadingMore = false;
+let allArticlesLoaded = false;
+let currentVideoUrl = ""; // Stocke l'URL de la vidéo en cours pour le téléchargement
+
+// ========== FONCTIONS DE NAVIGATION ==========
+function switchView(v) {
+    console.log("🔁 Navigation vers:", v);
+    
+    document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+    const target = document.getElementById('view-' + v);
+    if (target) target.classList.add('active');
+    
+    document.querySelectorAll('.nav-btn').forEach(btn => {
+        btn.classList.remove('active-nav');
+        btn.classList.add('text-gray-400');
+    });
+    
+    const activeBtn = document.getElementById('nav-' + v);
+    if (activeBtn) {
+        activeBtn.classList.add('active-nav');
+        activeBtn.classList.remove('text-gray-400');
+    }
+    
+    if (v === 'home') loadInitialFeed();
+    if (v === 'search') listenZenSpace(); // Active uniquement l'écoute vidéo de l'Espace 💡
+}
+
+function showToast(m) {
+    const t = document.getElementById('ua-toast');
+    const msg = document.getElementById('toast-message');
+    if (t && msg) {
+        msg.innerText = m;
+        t.classList.add('show');
+        setTimeout(() => t.classList.remove('show'), 3000);
+    }
+}
+
+function openSidebar() {
+    document.getElementById('sidebar')?.classList.add('open');
+    document.getElementById('sidebarOverlay')?.classList.add('open');
+}
+
+function closeSidebar() {
+    document.getElementById('sidebar')?.classList.remove('open');
+    document.getElementById('sidebarOverlay')?.classList.remove('open');
+}
+
+function openImageModal(src) {
+    const modal = document.getElementById('imageModal');
+    const img = document.getElementById('modalImage');
+    if (modal && img) {
+        img.src = src;
+        modal.classList.remove('hidden');
+    }
+}
+
+function closeImageModal() {
+    document.getElementById('imageModal')?.classList.add('hidden');
+}
+
+function handleLogout() {
+    if (confirm("Voulez-vous vraiment vous déconnecter et supprimer vos données locales ?")) {
+        auth.signOut().then(() => {
+            localStorage.clear();
+            location.reload();
+        }).catch(err => {
+            console.error("Erreur déconnexion:", err);
+            localStorage.clear();
+            location.reload();
+        });
+    }
+}
+
+// ========== SCROLL INFINI (FIL D'ACTUALITÉ) - VERSION CORRIGÉE AVEC IMAGES ==========
+async function loadMoreArticles() {
+    if (isLoadingMore || allArticlesLoaded) return;
+    isLoadingMore = true;
+    
+    let q;
+    if (lastArticleDoc) {
+        q = db.collection("articles").orderBy("createdAt", "desc").startAfter(lastArticleDoc).limit(5);
+    } else {
+        q = db.collection("articles").orderBy("createdAt", "desc").limit(5);
+    }
+    
+    const snap = await q.get();
+    if (snap.empty) {
+        allArticlesLoaded = true;
+        document.getElementById('load-more-container')?.classList.add('hidden');
+        isLoadingMore = false;
+        return;
+    }
+    
+    lastArticleDoc = snap.docs[snap.docs.length - 1];
+    const feed = document.getElementById('news-feed');
+    
+    snap.forEach(doc => {
+        const art = doc.data();
+        
+        const titreArticle = art.title || art.titre || "";
+        const contenuArticle = art.content || art.contenu || art.texte || "";
+        const lienImage = art.imageUrl || art.image || null;
+        
+        const imageHtml = lienImage ? `<img src="${lienImage}" class="w-full h-auto max-h-64 object-cover rounded-xl mb-3 mt-1" onerror="this.style.display='none'">` : '';
+        
+        feed.innerHTML += `
+            <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 mb-4">
+                <div class="p-5">
+                    ${titreArticle ? `<h3 class="font-black text-lg text-gray-800 mb-1">${titreArticle.replace(/</g, '&lt;')}</h3>` : ''}
+                    ${imageHtml}
+                    <p class="text-sm text-gray-600 leading-relaxed">${contenuArticle.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>
+                </div>
+            </div>`;
+    });
+    
+    if (snap.docs.length < 5) allArticlesLoaded = true;
+    document.getElementById('load-more-container')?.classList.toggle('hidden', allArticlesLoaded);
+    isLoadingMore = false;
+}
+
+function loadInitialFeed() {
+    lastArticleDoc = null;
+    allArticlesLoaded = false;
+    const feed = document.getElementById('news-feed');
+    if (feed) feed.innerHTML = '';
+    loadMoreArticles();
+}
+
+// ========== MOTEUR DE L'ESPACE 💡 (FONCTIONNEL - DIRECT TV SANS ROUTE UNIQUE) ==========
+function listenZenSpace() {
+    // Génération instantanée de la pensée automatique locale (définie en Partie 1)
+    if (typeof genererCitation === "function") {
+        genererCitation();
+    }
+
+    // Écoute directe et dynamique du flux TV envoyé par l'administration
+    db.collection("tv").doc("flux").onSnapshot(doc => {
+        const player = document.getElementById('ua-tv-player');
+        const displayTitle = document.getElementById('video-title-display');
+        
+        if (doc.exists && player) {
+            const data = doc.data();
+            const newVideoUrl = data.videoUrl || "";
+            
+            if (displayTitle) {
+                displayTitle.innerText = data.title || "Diffusion académique en cours";
+            }
+            
+            currentVideoUrl = newVideoUrl;
+            
+            if (newVideoUrl && player.src !== newVideoUrl) {
+                player.src = newVideoUrl;
+                player.load();
+            } else if (!newVideoUrl) {
+                player.src = "";
+            }
+        }
+    }, err => console.log("Erreur de synchronisation du flux vidéo:", err));
+}
+
+function downloadCurrentVideo() {
+    if (!currentVideoUrl) return showToast("❌ Aucune vidéo disponible au téléchargement");
+    showToast("📥 Téléchargement de la vidéo démarré...");
+    const a = document.createElement('a');
+    a.href = currentVideoUrl;
+    a.download = `UA_TV_Video_${Date.now()}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+// ========== CHAT EN TEMPS RÉEL (SÉCURISÉ CONTRE LES FAILLES XSS) ==========
+function startChat(amiId, amiNom) {
+    activeChatId = amiId;
+    document.getElementById('chatPartnerName').innerText = amiNom;
+    document.getElementById('chatWindow').classList.remove('hidden');
+    const roomId = [currentUser.uid, amiId].sort().join('_');
+    
+    if (unsubscribeChat) unsubscribeChat();
+    
+    unsubscribeChat = db.collection("messages")
+        .where("roomId", "==", roomId)
+        .orderBy("date", "asc")
+        .onSnapshot(snap => {
+            const box = document.getElementById('chatMessages');
+            if (!box) return;
+            box.innerHTML = "";
+            
+            snap.forEach(doc => {
+                const m = doc.data();
+                const isMe = m.senderId === currentUser.uid;
+                
+                const msgElement = document.createElement('div');
+                msgElement.className = `max-w-[80%] chat-message ${isMe ? 'self-end bg-green-600 text-white rounded-l-2xl rounded-tr-2xl' : 'self-start bg-white border rounded-r-2xl rounded-tl-2xl shadow-sm'} p-3 text-sm`;
+                msgElement.textContent = m.text || '';
+                
+                box.appendChild(msgElement);
+            });
+            box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+        });
+}
+
+async function sendMessage() {
+    const input = document.getElementById('chatInput');
+    const text = input.value.trim();
+    if (!text || !activeChatId) return;
+    
+    const roomId = [currentUser.uid, activeChatId].sort().join('_');
+    input.value = "";
+    
+    await db.collection("messages").add({ 
+        roomId, 
+        senderId: currentUser.uid, 
+        text: text, 
+        date: firebase.firestore.FieldValue.serverTimestamp() 
+    });
+}
+
+function closeChat() {
+    document.getElementById('chatWindow').classList.add('hidden');
+    if (unsubscribeChat) unsubscribeChat();
+}
+
+// ========== GESTION DU PROFIL (AVEC COMPRESSION IMAGE INTELLIGENTE) ==========
+async function registerUser() {
+    const nom = document.getElementById('reg-nom').value.trim();
+    const prenom = document.getElementById('reg-prenom').value.trim();
+    const filiere = document.getElementById('reg-filiere').value.trim();
+    
+    if (!nom || !prenom) return showToast("⚠️ Nom/Prénom requis");
+    
+    const savedData = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+    
+    const userData = { 
+        nom: nom, 
+        prenom: prenom, 
+        filiere: filiere, 
+        avatar: savedData.avatar || "", 
+        date: firebase.firestore.FieldValue.serverTimestamp() 
+    };
+    
+    localStorage.setItem('ua_user_data', JSON.stringify(userData));
+    localStorage.setItem('ua_registered', 'true');
+    
+    await db.collection("users").doc(currentUser.uid).set(userData);
+    updateProfileUI(userData);
+    showToast("✅ Profil enregistré !");
+    switchView('home');
+}
+
+async function previewImage(e, instant = false) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    showToast("⚡ Optimisation de l'image...");
+    try {
+        const options = { maxSizeMB: 0.1, maxWidthOrHeight: 400, useWebWorker: true };
+        const compressedFile = await imageCompression(file, options);
+        
+        const reader = new FileReader();
+        reader.onload = async (ev) => {
+            const url = ev.target.result;
+            document.getElementById('temp-avatar').src = url;
+            document.getElementById('user-img').src = url;
+            
+            let data = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+            data.avatar = url;
+            localStorage.setItem('ua_user_data', JSON.stringify(data));
+            
+            if (instant && currentUser) {
+                await db.collection("users").doc(currentUser.uid).set(data, { merge: true });
+                showToast("📸 Photo mise à jour !");
+            }
+        };
+        reader.readAsDataURL(compressedFile);
+    } catch (error) {
+        console.error("Erreur lors de la compression :", error);
+        showToast("❌ Échec de l'optimisation de l'image");
+    }
+}
+
+function updateProfileUI(data) {
+    document.getElementById('register-ui').classList.add('hidden');
+    document.getElementById('profile-ui').classList.remove('hidden');
+    document.getElementById('user-full-name').innerText = `${data.prenom || ''} ${data.nom || ''}`;
+    document.getElementById('user-sub').innerText = data.filiere || '';
+    if (data.avatar) document.getElementById('user-img').src = data.avatar;
+}
+
+// ========== RECHERCHE DE NOTES ==========
+async function searchNotes() {
+    const ine = document.getElementById('matSearch').value.trim();
+    const res = document.getElementById('resultArea');
+    if (!ine) return showToast("Entrez votre INE");
+    
+    res.innerHTML = '<div class="text-center text-gray-500">🔍 Recherche...</div>';
+    
+    try {
+        const snap = await db.collection("notes").where("ine", "==", ine).get();
+        if (snap.empty) {
+            res.innerHTML = `<div class="bg-blue-50 p-6 rounded-2xl text-center"><p class="font-bold text-blue-700">📭 Aucune note pour ${ine.replace(/</g, '&lt;')}</p></div>`;
+            return;
+        }
+        
+        let html = `<div class="space-y-4">`;
+        snap.forEach(doc => {
+            const n = doc.data();
+            html += `<div class="bg-white rounded-2xl border p-4">
+                        <div class="font-bold text-green-800">📚 ${(n.matiere || "Sans matière").replace(/</g, '&lt;')}</div>
+                        <div class="text-2xl font-black text-green-700">${n.note || "?"}/20</div>
+                        ${n.commentaire ? `<div class="text-sm italic">“${n.commentaire.replace(/</g, '&lt;')}”</div>` : ''}
+                    </div>`;
+        });
+        html += `</div>`;
+        res.innerHTML = html;
+    } catch (error) {
+        res.innerHTML = `<div class="text-red-500">❌ Erreur de chargement</div>`;
+    }
+}
     
