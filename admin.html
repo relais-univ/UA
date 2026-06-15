@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Administration - UA Social</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    
+    <!-- SDK Firebase Compat -->
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-storage-compat.js"></script>
+
+    <style>
+        .ua-green { background-color: #008751; }
+        .text-ua-green { color: #008751; }
+        .border-ua-green { border-color: #008751; }
+        .glass-lock { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen text-gray-800">
+
+    <!-- ÉCRAN DE VERROUILLAGE SÉCURISÉ -->
+    <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-green-800 to-emerald-900 p-4">
+        <div class="glass-lock p-8 rounded-[30px] shadow-2xl max-w-sm w-full text-center border border-white/20">
+            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 text-ua-green text-2xl shadow-inner">
+                <i class="fas fa-lock"></i>
+            </div>
+            <h2 class="text-2xl font-black text-gray-900 mb-2">Espace Sécurisé</h2>
+            <p class="text-xs text-gray-500 mb-6">Veuillez saisir le code administratif pour déverrouiller le panneau de contrôle.</p>
+            
+            <div class="relative mb-4">
+                <input type="password" id="adminCode" placeholder="Code secret administration" class="w-full pl-12 pr-4 py-3 bg-gray-100 border-2 border-transparent rounded-xl focus:border-green-600 focus:bg-white outline-none text-center font-bold tracking-widest">
+                <i class="fas fa-key absolute left-4 top-4 text-gray-400"></i>
+            </div>
+            <button onclick="checkCode()" class="w-full ua-green hover:bg-green-800 text-white font-bold py-3 rounded-xl transition shadow-lg active:scale-95">
+                <i class="fas fa-sign-in-alt mr-2"></i> Connexion
+            </button>
+        </div>
+    </div>
+
+    <!-- PANNEAU D'ADMINISTRATION PRINCIPAL -->
+    <div id="admin-panel" class="hidden min-h-screen flex flex-col">
+        <header class="ua-green text-white p-4 sticky top-0 z-40 shadow-md flex justify-between items-center px-6 lg:px-12">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl font-black text-ua-green">UA</div>
+                <div>
+                    <h1 class="text-lg font-black tracking-wide">UA SOCIAL</h1>
+                    <p class="text-[10px] text-green-200 uppercase font-bold tracking-widest">Panneau de Contrôle Général</p>
+                </div>
+            </div>
+            <button onclick="location.reload()" class="bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                <i class="fas fa-sign-out-alt"></i> Quitter
+            </button>
+        </header>
+
+        <main class="flex-1 max-w-6xl w-full mx-auto p-4 lg:p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            <!-- COLONNE GAUCHE : ARTICLES & ENTRÉE MULTIMÉDIA -->
+            <div class="space-y-8">
+                <!-- SECTION : CRÉATION D'ARTICLE -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-green-50 text-ua-green rounded-xl"><i class="fas fa-pen-fancy text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Créer un Article de Communauté</h2>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <input type="text" id="art-title" placeholder="Titre marquant de l'article..." class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-green-600 focus:bg-white outline-none text-sm font-semibold transition">
+                        <textarea id="art-content" rows="4" oninput="updatePreview()" placeholder="Que voulez-vous partager aujourd'hui avec les étudiants ?" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-green-600 focus:bg-white outline-none text-sm transition"></textarea>
+                        
+                        <div class="flex items-center gap-4">
+                            <label class="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 border-2 border-dashed border-gray-300 rounded-xl p-3 px-4 cursor-pointer transition text-xs font-bold text-gray-600 shrink-0">
+                                <i class="fas fa-plus text-ua-green"></i> <span>Ajouter média</span>
+                                <input type="file" id="art-file" accept="image/*,video/*" class="hidden" onchange="handleFileSelect(event)">
+                            </label>
+                            <span id="file-name-display" class="text-xs text-gray-400 italic truncate">Aucun fichier sélectionné</span>
+                        </div>
+                    </div>
+
+                    <!-- APERÇU SUR MOBILE / FIL ÉTUDIANT -->
+                    <div class="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-2">
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block"><i class="fas fa-eye mr-1"></i> Aperçu en direct (Style Fil)</span>
+                        <div class="bg-white p-4 rounded-xl shadow-xs border space-y-2">
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 rounded-full ua-green flex items-center justify-center text-white font-bold text-xs">UA</div>
+                                <div>
+                                    <h4 class="text-xs font-bold text-gray-800">Administration UA</h4>
+                                    <p class="text-[9px] text-gray-400">À l'instant • Public</p>
+                                </div>
+                            </div>
+                            <p id="preview-text" class="text-xs text-gray-600 whitespace-pre-wrap italic">Le contenu de votre publication apparaîtra ici au fur et à mesure...</p>
+                            <img id="preview-img" src="" class="hidden w-full h-40 object-cover rounded-lg mt-2 border">
+                        </div>
+                    </div>
+
+                    <button onclick="uploadArticle()" class="w-full ua-green hover:bg-green-800 text-white font-bold py-3 rounded-xl transition shadow flex items-center justify-center gap-2">
+                        <i class="fas fa-paper-plane"></i> Mettre en ligne l'article
+                    </button>
+
+                    <!-- FLUX DE SUPPRESSION DES ARTICLES ACTIFS -->
+                    <div class="mt-6 border-t pt-4">
+                        <span class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">
+                            <i class="fas fa-trash-alt text-red-500 mr-1"></i> Gestion / Suppression des articles
+                        </span>
+                        <button onclick="loadAdminArticles()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 rounded-xl text-xs transition mb-3">
+                            <i class="fas fa-sync mr-1"></i> Charger / Rafraîchir la liste des articles
+                        </button>
+                        <div id="admin-articles-list" class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                            <p class="text-center text-xs text-gray-400 italic py-2">Cliquez sur le bouton ci-dessus pour lister les publications actives.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- SECTION : MISE À JOUR UA TV / COURS VIDÉO -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-blue-50 text-blue-600 rounded-xl"><i class="fas fa-tv text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Mise à jour UA TV / Cours Vidéo</h2>
+                    </div>
+                    <p class="text-xs text-gray-500">Collez le lien direct (MP4, streaming ou stockage cloud) pour remplacer instantanément la vidéo éducative sur l'espace 💡 de l'application.</p>
+                    
+                    <div class="relative">
+                        <input type="text" id="video-url" placeholder="https://exemple.com/cours_video.mp4" class="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-blue-600 focus:bg-white outline-none text-sm transition font-mono">
+                        <i class="fas fa-link absolute left-3.5 top-4 text-gray-400"></i>
+                    </div>
+                    
+                    <button onclick="updateTV()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-xl transition shadow flex items-center justify-center gap-2">
+                        <i class="fas fa-sync-alt"></i> Actualiser le flux vidéo global
+                    </button>
+                </section>
+            </div>
+
+            <!-- COLONNE DROITE : IMPORTATION MASSIVE & RECTIFICATION DES NOTES -->
+            <div class="space-y-8">
+                <!-- SECTION : IMPORTATION EXCEL / CSV -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-purple-50 text-purple-600 rounded-xl"><i class="fas fa-file-upload text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Importation Massive de Notes (Excel / CSV)</h2>
+                    </div>
+                    <div class="bg-purple-50 p-4 rounded-2xl text-xs text-purple-950 border border-purple-100 space-y-1">
+                        <p class="font-bold"><i class="fas fa-info-circle mr-1"></i> Structure obligatoire du fichier :</p>
+                        <p>La première ligne de votre fichier CSV doit impérativement contenir les en-têtes exacts suivants :</p>
+                        <code class="block bg-white/60 p-2 rounded mt-1 font-mono text-[11px] border border-purple-200">INE,Matiere,Note,Appreciation</code>
+                    </div>
+
+                    <div class="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center bg-gray-50 hover:bg-gray-100 transition relative">
+                        <input type="file" id="csv-file" accept=".csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="displayCSVName(event)">
+                        <div class="space-y-2">
+                            <i class="fas fa-file-csv text-4xl text-purple-400"></i>
+                            <p id="csv-file-name" class="text-xs font-bold text-gray-600">Cliquez pour charger ou glissez le fichier .CSV ici</p>
+                            <p class="text-[10px] text-gray-400">Prend en charge l'injection de gros volumes de données</p>
+                        </div>
+                    </div>
+
+                    <button onclick="importNotes()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-xl transition shadow flex items-center justify-center gap-2">
+                        <i class="fas fa-database"></i> Injecter et lier les notes aux INE
+                    </button>
+                </section>
+
+                <!-- SECTION : RECHERCHE & RECTIFICATION -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-amber-50 text-amber-600 rounded-xl"><i class="fas fa-search text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Recherche & Suppression de Relevés</h2>
+                    </div>
+                    <p class="text-xs text-gray-500">Saisissez l'INE officiel complet d'un étudiant pour visualiser et supprimer instantanément ses relevés en base de données.</p>
+                    
+                    <div class="flex gap-2">
+                        <div class="relative flex-1">
+                            <input type="text" id="search-ine" placeholder="Rechercher un INE étudiant..." class="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-amber-500 focus:bg-white outline-none text-sm transition font-bold uppercase">
+                            <i class="fas fa-id-badge absolute left-3.5 top-4 text-gray-400"></i>
+                        </div>
+                        <button onclick="findNote()" class="bg-amber-500 hover:bg-amber-600 text-white font-bold px-5 rounded-xl transition shadow active:scale-95">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+
+                    <div id="edit-area" class="space-y-3 pt-2 max-h-60 overflow-y-auto pr-1">
+                        <p class="text-center text-xs text-gray-400 italic py-4">Aucune recherche en cours.</p>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+                          
