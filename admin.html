@@ -183,3 +183,385 @@
     </div>
 
     <script>
+// ========== CONFIGURATION ET INITIALISATION UNIFIÉE ==========
+        // Configuration active et synchronisée pour le projet : Faso opportunités
+        const firebaseConfig = {
+            apiKey: "AIzaSyAlxkxSSmmt6hRqqT6qvwHuXHF2q5n-Qxk",
+            authDomain: "faso-opportunites.firebaseapp.com",
+            databaseURL: "https://faso-opportunites-default-rtdb.firebaseio.com",
+            projectId: "faso-opportunites",
+            storageBucket: "faso-opportunites.firebasestorage.app",
+            messagingSenderId: "548784260893",
+            appId: "1:548784260893:web:11894c7a8160dd76e7c3f4",
+            measurementId: "G-9J6PQBBFF8"
+        };
+        
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+
+        let selectedFile = null;
+
+        // 1. BARRIÈRE DE SÉCURITÉ (CODE SECRET ADMIN)
+        function checkCode() {
+            const inputCode = document.getElementById('adminCode').value;
+            if (inputCode === 'UA2026') {
+                document.getElementById('login-screen').classList.add('hidden');
+                document.getElementById('admin-panel').classList.remove('hidden');
+                loadAdminArticles(); // Chargement automatique initial des publications actives
+            } else {
+                alert("🔴 Code d'accès refusé. Autorisation requise.");
+            }
+        }
+
+        // 2. LOGIQUE DE PRÉVISUALISATION DES ARTICLES
+        function updatePreview() {
+            const content = document.getElementById('art-content').value;
+            const previewText = document.getElementById('preview-text');
+            if (previewText) {
+                previewText.innerText = content || "Le contenu de votre publication apparaîtra ici au fur et à mesure...";
+            }
+        }
+
+        function handleFileSelect(event) {
+            selectedFile = event.target.files[0];
+            const nameDisplay = document.getElementById('file-name-display');
+            const previewImg = document.getElementById('preview-img');
+            
+            if (selectedFile) {
+                if (!selectedFile.type.startsWith('image/')) {
+                    alert("⚠️ Pour les articles administratifs, veuillez utiliser uniquement des images (.jpg, .png, .webp).");
+                    event.target.value = "";
+                    selectedFile = null;
+                    return;
+                }
+
+                if (nameDisplay) {
+                    nameDisplay.innerText = selectedFile.name;
+                    nameDisplay.className = "text-xs text-green-600 font-bold truncate";
+                }
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    if (previewImg) {
+                        previewImg.src = e.target.result;
+                        previewImg.classList.remove('hidden');
+                    }
+                }
+                reader.readAsDataURL(selectedFile);
+            } else {
+                if (nameDisplay) {
+                    nameDisplay.innerText = "Aucun fichier sélectionné";
+                    nameDisplay.className = "text-xs text-gray-400 italic truncate";
+                }
+                if (previewImg) previewImg.classList.add('hidden');
+            }
+        }
+
+        // 3. ENVOI DES ARTICLES SUR FIRESTORE VIA ENCODAGE BASE64 (SANS STORAGE)
+        async function uploadArticle() {
+            const title = document.getElementById('art-title').value.trim();
+            const content = document.getElementById('art-content').value.trim();
+            
+            if (!content) {
+                alert("⚠️ Le contenu de l'article ne peut pas être vide !");
+                return;
+            }
+
+            try {
+                if (selectedFile) {
+                    alert("⏳ Optimisation et encodage de l'image en cours...");
+                    const reader = new FileReader();
+                    reader.readAsDataURL(selectedFile);
+                    reader.onloadend = async () => {
+                        const base64Media = reader.result;
+                        await publierArticleData(title, content, base64Media);
+                    };
+                } else {
+                    await publierArticleData(title, content, "");
+                }
+            } catch (error) {
+                alert("❌ Erreur lors de la préparation : " + error.message);
+            }
+        }
+
+        async function publierArticleData(title, content, mediaUrl) {
+            try {
+                await db.collection("articles").add({
+                    title: title,
+                    content: content,
+                    imageUrl: mediaUrl || null,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                alert("✅ Article mis en ligne avec succès sur le fil des étudiants !");
+                
+                // Nettoyage complet du formulaire
+                document.getElementById('art-title').value = "";
+                document.getElementById('art-content').value = "";
+                document.getElementById('art-file').value = "";
+                const nameDisplay = document.getElementById('file-name-display');
+                if (nameDisplay) {
+                    nameDisplay.innerText = "Aucun fichier sélectionné";
+                    nameDisplay.className = "text-xs text-gray-400 italic truncate";
+                }
+                const previewImg = document.getElementById('preview-img');
+                if (previewImg) previewImg.classList.add('hidden');
+                
+                updatePreview();
+                selectedFile = null;
+                
+                loadAdminArticles();
+            } catch (error) {
+                alert("❌ Échec de la publication sur Firestore : " + error.message);
+            }
+        }
+
+        // 4. SUPPRESSION ET MISE À JOUR DU FIL ADMIN
+        async function loadAdminArticles() {
+            const listArea = document.getElementById('admin-articles-list');
+            if (!listArea) return;
+            listArea.innerHTML = `<div class="text-center py-2 text-xs text-gray-500"><i class="fas fa-spinner animate-spin text-green-600"></i> Récupération du fil...</div>`;
+            
+            try {
+                const snapshot = await db.collection("articles").orderBy("createdAt", "desc").get();
+                
+                if (snapshot.empty) {
+                    listArea.innerHTML = `<p class="text-center text-xs text-gray-400 py-2">Aucun article publié pour le moment.</p>`;
+                    return;
+                }
+
+                listArea.innerHTML = "";
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const displayTitle = data.title || "Sans titre";
+                    const displayContent = data.content || data.contenu || "";
+                    
+                    listArea.innerHTML += `
+                        <div id="art-card-${doc.id}" class="bg-gray-50 p-2 rounded-xl flex justify-between items-center gap-3 text-xs border border-gray-200">
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800 truncate">${displayTitle}</h4>
+                                <p class="text-[10px] text-gray-400 truncate">${displayContent}</p>
+                            </div>
+                            <button onclick="deleteArticle('${doc.id}')" class="text-red-500 hover:text-red-700 p-2 bg-red-50 rounded-lg transition shrink-0">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </div>`;
+                });
+            } catch (error) {
+                listArea.innerHTML = `<p class="text-center text-xs text-red-500 py-2">Erreur : ${error.message}</p>`;
+            }
+        }
+
+        async function deleteArticle(docId) {
+            if (!confirm("⚠️ Voulez-vous vraiment supprimer définitivement cette publication ? Elle disparaîtra immédiatement de l'accueil de tous les étudiants.")) return;
+
+            try {
+                await db.collection("articles").doc(docId).delete();
+                const element = document.getElementById(`art-card-${docId}`);
+                if (element) element.remove();
+                alert("✅ Publication supprimée !");
+                
+                const listArea = document.getElementById('admin-articles-list');
+                if (listArea && listArea.children.length === 0) {
+                    listArea.innerHTML = `<p class="text-center text-xs text-gray-400 py-2">Aucun article restant.</p>`;
+                }
+            } catch (error) {
+                alert("❌ Suppression impossible : " + error.message);
+            }
+        }
+
+        // 5. SYNCHRONISATION DU FLUX MULTIMÉDIA (UA TV) AVEC TITRE DYNAMIQUE
+        async function updateTV() {
+            const url = document.getElementById('video-url').value.trim();
+            const titleInput = document.getElementById('video-title').value.trim();
+            const finalTitle = titleInput || "Diffusion académique en cours";
+
+            if (!url) {
+                alert("⚠️ Veuillez entrer une URL de flux valide.");
+                return;
+            }
+
+            try {
+                await db.collection("tv").doc("flux").set({
+                    videoUrl: url,
+                    title: finalTitle,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                
+                alert("📺 Flux UA TV mis à jour ! La diffusion et le titre ont changé pour tous les étudiants.");
+                document.getElementById('video-url').value = "";
+                document.getElementById('video-title').value = "";
+            } catch (error) {
+                alert("❌ Échec de la synchronisation vidéo : " + error.message);
+            }
+        }
+
+        // 6. LOGIQUE D'IMPORTATION DES NOTES CSV VIA PAPAPARSE (BATCHS OPTIMISÉS)
+        function displayCSVName(event) {
+            const file = event.target.files[0];
+            const csvNameDisplay = document.getElementById('csv-file-name');
+            if (file && csvNameDisplay) {
+                csvNameDisplay.innerText = `📊 Fichier prêt : ${file.name}`;
+                csvNameDisplay.className = "text-xs font-bold text-purple-700 truncate";
+            }
+        }
+
+        async function importNotes() {
+            const fileInput = document.getElementById('csv-file');
+            if (!fileInput || fileInput.files.length === 0) {
+                alert("⚠️ Sélectionnez d'abord un fichier au format .CSV");
+                return;
+            }
+
+            const file = fileInput.files[0];
+            
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: async function(results) {
+                    const rows = results.data;
+                    if (rows.length === 0) {
+                        alert("❌ Le fichier CSV semble vide.");
+                        return;
+                    }
+
+                    if (!('INE' in rows[0]) || !('Matiere' in rows[0]) || !('Note' in rows[0])) {
+                        alert("❌ Colonnes obligatoires introuvables. Vérifiez vos en-têtes : INE, Matiere, Note");
+                        return;
+                    }
+
+                    if (!confirm(`🚀 Injecter les ${rows.length} lignes de notes rattachées ?`)) return;
+
+                    let batch = db.batch();
+                    let counter = 0;
+                    let totalSaved = 0;
+
+                    try {
+                        for (let row of rows) {
+                            const ine = row.INE ? row.INE.trim().toUpperCase() : "";
+                            const matiere = row.Matiere ? row.Matiere.trim() : "";
+                            const note = row.Note ? row.Note.trim() : "";
+                            const commentaire = row.Appreciation ? row.Appreciation.trim() : (row.commentaire ? row.commentaire.trim() : "Aucune remarque.");
+
+                            if (!ine || !matiere) continue;
+
+                            const cleanKey = `${ine}_${matiere.replace(/[^a-zA-Z0-9]/g, "_")}`;
+                            const docRef = db.collection("notes").doc(cleanKey);
+
+                            batch.set(docRef, {
+                                ine: ine,
+                                matiere: matiere,
+                                note: note,
+                                commentaire: commentaire,
+                                importedAt: firebase.firestore.FieldValue.serverTimestamp()
+                            }, { merge: true });
+
+                            counter++;
+                            totalSaved++;
+
+                            if (counter === 500) {
+                                await batch.commit();
+                                batch = db.batch();
+                                counter = 0;
+                            }
+                        }
+
+                        if (counter > 0) {
+                            await batch.commit();
+                        }
+
+                        alert(`🎯 Base de données synchronisée ! ${totalSaved} notes ajoutées ou mises à jour.`);
+                        fileInput.value = "";
+                        const csvNameDisplay = document.getElementById('csv-file-name');
+                        if (csvNameDisplay) {
+                            csvNameDisplay.innerText = "Cliquez pour charger ou glissez le fichier .CSV ici";
+                            csvNameDisplay.className = "text-xs font-bold text-gray-600";
+                        }
+
+                    } catch (err) {
+                        alert("❌ Erreur d'écriture Firebase : " + err.message);
+                    }
+                }
+            });
+        }
+
+        // 7. MODULE DE RECHERCHE ET RECTIFICATION EN DIRECT
+        async function findNote() {
+            const searchIne = document.getElementById('search-ine').value.trim().toUpperCase();
+            if (!searchIne) {
+                alert("⚠️ Veuillez saisir un INE pour lancer la recherche.");
+                return;
+            }
+
+            const editArea = document.getElementById('edit-area');
+            if (!editArea) return;
+            editArea.innerHTML = `<div class="text-center py-4"><i class="fas fa-spinner animate-spin text-amber-500"></i> Analyse en cours...</div>`;
+
+            try {
+                const snapshot = await db.collection("notes").where("ine", "==", searchIne).get();
+                
+                if (snapshot.empty) {
+                    editArea.innerHTML = `<p class="text-center text-xs text-red-500 py-4 font-bold"><i class="fas fa-exclamation-triangle"></i> Aucun relevé trouvé pour l'INE : ${searchIne}</p>`;
+                    return;
+                }
+
+                editArea.innerHTML = "";
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    editArea.innerHTML += `
+                        <div id="card-${doc.id}" class="bg-gray-50 border border-gray-200 p-3 rounded-xl flex justify-between items-center gap-4 text-xs">
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-900 truncate">📚 ${data.matiere}</h4>
+                                <p class="text-[11px] text-gray-500 italic mt-0.5">"${data.commentaire}"</p>
+                            </div>
+                            <div class="flex items-center gap-3 shrink-0">
+                                <span class="bg-amber-100 text-amber-800 font-black px-2.5 py-1 rounded-lg text-sm">${data.note}/20</span>
+                                <button onclick="deleteNote('${doc.id}')" class="text-red-500 hover:text-red-700 p-2 bg-red-50 rounded-lg transition" title="Supprimer définitivement">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </div>`;
+                });
+
+            } catch (error) {
+                editArea.innerHTML = `<p class="text-center text-xs text-red-500 py-4">Erreur : ${error.message}</p>`;
+            }
+        }
+
+        async function deleteNote(docId) {
+            if (!confirm("⚠️ Confirmez-vous la suppression définitive de cette note ? L'étudiant ne pourra plus la voir.")) return;
+
+            try {
+                await db.collection("notes").doc(docId).delete();
+                const card = document.getElementById(`card-${docId}`);
+                if (card) card.remove();
+                alert("✅ Note retirée avec succès.");
+                
+                const editArea = document.getElementById('edit-area');
+                if (editArea && editArea.children.length === 0) {
+                    editArea.innerHTML = `<p class="text-center text-xs text-gray-400 italic py-4">Plus aucun relevé pour cet INE.</p>`;
+                }
+            } catch (error) {
+                alert("❌ Impossible de supprimer la note : " + error.message);
+            }
+        }
+
+        // ========== EXPORTATION GLOBAL POUR PORTÉE HTML (ONCLICK) ==========
+        Object.assign(window, {
+            checkCode,
+            updatePreview,
+            handleFileSelect,
+            uploadArticle,
+            loadAdminArticles,
+            deleteArticle,
+            updateTV,
+            displayCSVName,
+            importNotes,
+            findNote,
+            deleteNote
+        });
+    </script>
+</body>
+</html>
