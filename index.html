@@ -219,4 +219,162 @@
         <button onclick="closeMediaModal()" class="absolute top-4 right-4 text-white text-3xl">&times;</button>
     </div>
 
-    <script>
+    <script>// ========== CONFIGURATION FIREBASE SYNCHRONISÉE - PROJET : FASO OPPORTUNITÉS ==========
+    const firebaseConfig = {
+        apiKey: "AIzaSyAlxkxSSmmt6hRqqT6qvwHuXHF2q5n-Qxk",
+        authDomain: "faso-opportunites.firebaseapp.com",
+        databaseURL: "https://faso-opportunites-default-rtdb.firebaseio.com",
+        projectId: "faso-opportunites",
+        storageBucket: "faso-opportunites.firebasestorage.app",
+        messagingSenderId: "548784260893",
+        appId: "1:548784260893:web:11894c7a8160dd76e7c3f4",
+        measurementId: "G-9J6PQBBFF8"
+    };
+
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    let currentUser = null;
+    let activeChatId = null;
+    let unsubscribeChat = null;
+    let lastArticleDoc = null;
+    let isLoadingMore = false;
+    let allArticlesLoaded = false;
+    let currentVideoUrl = "";
+
+    // ========== FONCTIONS DE NAVIGATION SÉCURISÉES ==========
+    function switchView(v) {
+        let targetView = v;
+        if (v === 'home' || v === 'accueil') targetView = 'home';
+        if (v === 'search' || v === 'zen' || v === '💡') targetView = 'search';
+        if (v === 'notes') targetView = 'notes';
+        if (v === 'community' || v === 'amis') targetView = 'community';
+        if (v === 'profile' || v === 'profil') targetView = 'profile';
+
+        const titles = { 'home': "Fil d'actualité", 'search': "Espace 💡", 'notes': "Mes notes", 'community': "Mes Amis", 'profile': "Mon Profil" };
+        const pageTitleElement = document.getElementById('pageTitle');
+        if (pageTitleElement && titles[targetView]) {
+            pageTitleElement.innerText = titles[targetView];
+        }
+
+        document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+        const target = document.getElementById('view-' + targetView);
+        if (target) target.classList.add('active');
+        
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.remove('active-nav');
+            btn.classList.add('text-gray-400');
+        });
+        
+        const activeBtn = document.getElementById('nav-' + targetView);
+        if (activeBtn) {
+            activeBtn.classList.add('active-nav');
+            activeBtn.classList.remove('text-gray-400');
+        }
+        
+        if (targetView === 'home') loadInitialFeed();
+        if (targetView === 'search') listenZenSpace();
+    }
+
+    function showToast(m) {
+        const t = document.getElementById('ua-toast');
+        const msg = document.getElementById('toast-message');
+        if (t && msg) {
+            msg.innerText = m;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+    }
+
+    function openSidebar() {
+        document.getElementById('sidebar')?.classList.add('open');
+        document.getElementById('sidebarOverlay')?.classList.add('open');
+    }
+
+    function closeSidebar() {
+        document.getElementById('sidebar')?.classList.remove('open');
+        document.getElementById('sidebarOverlay')?.classList.remove('open');
+    }
+
+    function openImageModal(src) {
+        const modal = document.getElementById('imageModal');
+        const img = document.getElementById('modalImage');
+        if (modal && img) {
+            img.src = src;
+            modal.classList.remove('hidden');
+        }
+    }
+
+    function closeImageModal() {
+        document.getElementById('imageModal')?.classList.add('hidden');
+    }
+
+    function handleLogout() {
+        if (confirm("Voulez-vous vraiment vous déconnecter ?")) {
+            auth.signOut().then(() => {
+                localStorage.clear();
+                location.reload();
+            }).catch(() => {
+                localStorage.clear();
+                location.reload();
+            });
+        }
+    }
+
+    // ========== CHARGEMENT DES ARTICLES DE L'ADMINISTRATION ==========
+    async function loadMoreArticles() {
+        if (isLoadingMore || allArticlesLoaded) return;
+        isLoadingMore = true;
+        
+        let q = db.collection("articles").orderBy("createdAt", "desc").limit(5);
+        if (lastArticleDoc) {
+            q = db.collection("articles").orderBy("createdAt", "desc").startAfter(lastArticleDoc).limit(5);
+        }
+        
+        try {
+            const snap = await q.get();
+            if (snap.empty) {
+                allArticlesLoaded = true;
+                document.getElementById('load-more-container')?.classList.add('hidden');
+                isLoadingMore = false;
+                return;
+            }
+            
+            lastArticleDoc = snap.docs[snap.docs.length - 1];
+            const feed = document.getElementById('news-feed');
+            
+            snap.forEach(doc => {
+                const art = doc.data();
+                const titreArticle = art.title || art.titre || "";
+                const contenuArticle = art.content || art.contenu || art.texte || "";
+                const lienImage = art.imageUrl || art.image || null;
+                
+                const imageHtml = lienImage ? `<img src="${lienImage}" class="w-full h-auto max-h-64 object-cover rounded-xl mb-3 mt-1" onerror="this.style.display='none'">` : '';
+                
+                feed.innerHTML += `
+                    <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 mb-4">
+                        <div class="p-5">
+                            ${titreArticle ? `<h3 class="font-black text-lg text-gray-800 mb-1">${titreArticle.replace(/</g, '&lt;')}</h3>` : ''}
+                            ${imageHtml}
+                            <p class="text-sm text-gray-600 leading-relaxed">${contenuArticle.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>
+                        </div>
+                    </div>`;
+            });
+            
+            if (snap.docs.length < 5) allArticlesLoaded = true;
+            document.getElementById('load-more-container')?.classList.toggle('hidden', allArticlesLoaded);
+        } catch (e) { /* Silencieux */ }
+        isLoadingMore = false;
+    }
+
+    function loadInitialFeed() {
+        lastArticleDoc = null;
+        allArticlesLoaded = false;
+        const feed = document.getElementById('news-feed');
+        if (feed) feed.innerHTML = '';
+        loadMoreArticles();
+    }
+        
