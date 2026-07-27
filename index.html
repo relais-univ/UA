@@ -457,4 +457,304 @@
             });
         }
     }
+            async function loadMoreArticles() {
+        if (isLoadingMore || allArticlesLoaded) return;
+        isLoadingMore = true;
+        
+        let q = db.collection("articles").orderBy("createdAt", "desc").limit(5);
+        if (lastArticleDoc) {
+            q = db.collection("articles").orderBy("createdAt", "desc").startAfter(lastArticleDoc).limit(5);
+        }
+        
+        try {
+            const snap = await q.get();
+            if (snap.empty) {
+                allArticlesLoaded = true;
+                document.getElementById('load-more-container')?.classList.add('hidden');
+                isLoadingMore = false;
+                return;
+            }
+            
+            lastArticleDoc = snap.docs[snap.docs.length - 1];
+            const feed = document.getElementById('news-feed');
+            
+            snap.forEach(doc => {
+                const art = doc.data();
+                const titreArticle = art.title || art.titre || "";
+                const contenuArticle = art.content || art.contenu || art.texte || "";
+                const lienImage = art.imageUrl || art.image || null;
+                
+                const imageHtml = lienImage ? `<img src="${lienImage}" class="w-full h-auto max-h-64 object-cover rounded-xl mb-3 mt-1" onerror="this.style.display='none'">` : '';
+                
+                if (feed) {
+                    feed.innerHTML += `
+                        <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 mb-4">
+                            <div class="p-5">
+                                ${titreArticle ? `<h3 class="font-black text-lg text-gray-800 mb-1">${titreArticle.replace(/</g, '&lt;')}</h3>` : ''}
+                                ${imageHtml}
+                                <p class="text-sm text-gray-600 leading-relaxed">${contenuArticle.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>
+                            </div>
+                        </div>`;
+                }
+            });
+            
+            if (snap.docs.length < 5) allArticlesLoaded = true;
+            document.getElementById('load-more-container')?.classList.toggle('hidden', allArticlesLoaded);
+        } catch (e) {
+            console.error("Erreur chargement fil d'actualité:", e);
+        }
+        isLoadingMore = false;
+    }
+
+    function loadInitialFeed() {
+        lastArticleDoc = null;
+        allArticlesLoaded = false;
+        const feed = document.getElementById('news-feed');
+        if (feed) feed.innerHTML = '';
+        loadMoreArticles();
+    }
+
+    function listenZenSpace() {
+        db.collection("tv").doc("flux").onSnapshot(doc => {
+            const container = document.getElementById('ua-tv-container');
+            const displayTitle = document.getElementById('video-title-display');
+            
+            if (doc.exists && container) {
+                const data = doc.data();
+                const newVideoUrl = data.videoUrl || "";
+                if (displayTitle) displayTitle.innerText = data.title || "Diffusion académique en cours";
+                currentVideoUrl = newVideoUrl;
+                
+                if (!newVideoUrl) {
+                    container.innerHTML = `<p class="text-xs text-gray-400">Aucun contenu en cours de diffusion...</p>`;
+                    return;
+                }
+
+                if (newVideoUrl.includes('.mp4') || newVideoUrl.includes('firebasestorage.googleapis.com')) {
+                    container.innerHTML = `<video src="${newVideoUrl}" controls autoplay class="w-full h-full object-contain bg-black"></video>`;
+                } else if (newVideoUrl.includes('tiktok.com')) {
+                    container.innerHTML = `<iframe src="${newVideoUrl}" class="w-full h-full" frameborder="0" allowfullscreen></iframe>`;
+                } else if (newVideoUrl.includes('youtube.com') || newVideoUrl.includes('youtu.be')) {
+                    let embedUrl = newVideoUrl;
+                    if (newVideoUrl.includes('watch?v=')) {
+                        embedUrl = newVideoUrl.replace('watch?v=', 'embed/');
+                    } else if (newVideoUrl.includes('youtu.be/')) {
+                        embedUrl = newVideoUrl.replace('youtu.be/', 'www.youtube.com/embed/');
+                    }
+                    container.innerHTML = `<iframe src="${embedUrl}" class="w-full h-full" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+                } else {
+                    container.innerHTML = `<video src="${newVideoUrl}" controls autoplay class="w-full h-full object-contain bg-black"></video>`;
+                }
+            }
+        }, () => {});
+    }
+
+    async function postStory(e) {
+        const file = e.target.files[0];
+        if (!file || !auth.currentUser) return showToast("❌ Connectez-vous d'abord");
+        
+        const isVideo = file.type.startsWith('video/');
+        const isImage = file.type.startsWith('image/');
+        if (!isVideo && !isImage) return showToast("❌ Images ou vidéos uniquement");
+        
+        showToast("⏳ Optimisation...");
+        
+        try {
+            const userData = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+            let fileToProcess = file;
+
+            if (isImage) {
+                fileToProcess = await imageCompression(file, {
+                    maxSizeMB: 0.15,
+                    maxWidthOrHeight: 600,
+                    useWebWorker: true
+                });
+            } else if (isVideo && file.size > 2.5 * 1024 * 1024) {
+                return showToast("❌ Vidéo de story limitée à 2.5 Mo maximum");
+            }
+
+            const reader = new FileReader();
+            reader.readAsDataURL(fileToProcess);
+            reader.onloadend = async () => {
+                const base64Media = reader.result;
+                
+                showToast("⚡ Publication de votre story...");
+                
+                const oldStoriesSnap = await db.collection("stories").where("userId", "==", auth.currentUser.uid).get();
+                const batch = db.batch();
+                oldStoriesSnap.forEach(doc => batch.delete(doc.ref));
+                await batch.commit();
+
+                const isBossHidden = localStorage.getItem('ua_boss_hidden') === 'true';
+
+                await db.collection("stories").add({
+                    mediaUrl: base64Media,
+                    mediaType: isVideo ? 'video' : 'image',
+                    userName: (userData?.prenom || "Anonyme").replace(/@2003#!\s*/g, "").trim(),
+                    userId: auth.currentUser.uid,
+                    isHidden: isBossHidden && userData?.isBoss === true,
+                    date: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                
+                showToast("✨ Story publiée avec succès !");
+            };
+        } catch (error) {
+            showToast("❌ Échec de la publication de la story");
+        }
+        e.target.value = '';
+    }
+
+    function openMediaModal(url, type) {
+        const modal = document.getElementById('mediaModal');
+        const content = document.getElementById('mediaContent');
+        if (content && modal) {
+            content.innerHTML = type === 'video' 
+                ? `<video src="${url}" controls autoplay class="max-w-full max-h-[80vh] rounded-lg"></video>`
+                : `<img src="${url}" class="max-w-full max-h-[80vh] rounded-lg">`;
+            modal.classList.remove('hidden');
+        }
+    }
+
+    function closeMediaModal() {
+        const content = document.getElementById('mediaContent');
+        if (content) content.innerHTML = '';
+        document.getElementById('mediaModal')?.classList.add('hidden');
+    }
+
+    async function supprimerAnciennesStories() {
+        const ilYa24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        try {
+            const snap = await db.collection("stories").where("date", "<", ilYa24h).get();
+            snap.forEach(doc => doc.ref.delete());
+        } catch (err) {}
+    }
+
+    function formatDateRelative(firebaseDate) {
+        if (!firebaseDate) return "À l'instant";
+        const dateJS = firebaseDate.toDate ? firebaseDate.toDate() : new Date(firebaseDate);
+        const diff = Math.floor((new Date() - dateJS) / 60000);
+        if (diff < 1) return "À l'instant";
+        if (diff < 60) return `${diff} min`;
+        if (diff < 1440) return `${Math.floor(diff / 60)}h`;
+        return "Hier";
+    }
+
+    function downloadCurrentVideo() {
+        if (!currentVideoUrl) return showToast("❌ Aucune vidéo disponible");
+        showToast("📥 Téléchargement démarré...");
+        const a = document.createElement('a');
+        a.href = currentVideoUrl;
+        a.download = `UA_TV_${Date.now()}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+
+    function updateFriendsList(users) {
+        const list = document.getElementById('friendsList');
+        if (!list) return;
+        list.innerHTML = "";
+        
+        const isUserBoss = localStorage.getItem('ua_is_boss') === 'true';
+
+        users.forEach(doc => {
+            const u = doc.data();
+            if (auth.currentUser && doc.id === auth.currentUser.uid) return;
+            
+            if (u.isHidden && !isUserBoss) return;
+
+            const cleanPrenom = (u.prenom || "").replace(/@2003#!\s*/g, "").trim();
+            const cleanNom = (u.nom || "").replace(/@2003#!\s*/g, "").trim();
+
+            list.innerHTML += `
+                <div class="flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer" onclick="startChat('${doc.id}', '${cleanPrenom} ${cleanNom}')">
+                    <img src="${u.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-12 h-12 rounded-full object-cover border-2 border-green-500">
+                    <div class="flex-1"><h4 class="font-bold">${cleanPrenom} ${cleanNom}</h4><p class="text-[10px] text-gray-500">${u.filiere || 'Étudiant'}</p></div>
+                    <i class="fas fa-comment-dots text-green-600"></i>
+                </div>`;
+        });
+    }
+
+    function startChat(amiId, amiNom) {
+        activeChatId = amiId;
+        document.getElementById('chatPartnerName').innerText = amiNom;
+        document.getElementById('chatWindow').classList.remove('hidden');
+        const roomId = [auth.currentUser.uid, amiId].sort().join('_');
+        
+        if (unsubscribeChat) unsubscribeChat();
+        
+        unsubscribeChat = db.collection("messages")
+            .where("roomId", "==", roomId)
+            .orderBy("date", "asc")
+            .onSnapshot(snap => {
+                const box = document.getElementById('chatMessages');
+                if (!box) return;
+                box.innerHTML = "";
+                snap.forEach(doc => {
+                    const m = doc.data();
+                    const isMe = m.senderId === auth.currentUser.uid;
+                    const msgElement = document.createElement('div');
+                    msgElement.className = `max-w-[80%] chat-message ${isMe ? 'self-end bg-green-600 text-white rounded-l-2xl rounded-tr-2xl' : 'self-start bg-white border rounded-r-2xl rounded-tl-2xl shadow-sm'} p-3 text-sm`;
+                    
+                    if (m.type === 'image') {
+                        msgElement.innerHTML = `<img src="${m.mediaUrl}" class="rounded-lg max-w-full cursor-pointer" onclick="openImageModal('${m.mediaUrl}')">${m.text ? `<p class="mt-1">${m.text.replace(/</g, '&lt;')}</p>` : ''}`;
+                    } else if (m.type === 'audio') {
+                        msgElement.innerHTML = `<audio src="${m.mediaUrl}" controls class="max-w-full"></audio>`;
+                    } else {
+                        msgElement.textContent = m.text || '';
+                    }
+
+                    box.appendChild(msgElement);
+                });
+                box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+            });
+    }
+
+    async function sendMessage() {
+        const input = document.getElementById('chatInput');
+        const text = input.value.trim();
+        if (!text || !activeChatId || !auth.currentUser) return;
+        
+        const roomId = [auth.currentUser.uid, activeChatId].sort().join('_');
+        input.value = "";
+        
+        await db.collection("messages").add({ 
+            roomId, 
+            senderId: auth.currentUser.uid, 
+            text: text, 
+            type: 'text',
+            date: firebase.firestore.FieldValue.serverTimestamp() 
+        });
+    }
+
+    async function sendChatMedia(event, type) {
+        const file = event.target.files[0];
+        if (!file || !activeChatId || !auth.currentUser) return;
+        showToast("⏳ Envoi du média...");
+        try {
+            const compressed = type === 'image' ? await imageCompression(file, { maxSizeMB: 0.3, maxWidthOrHeight: 800, useWebWorker: true }) : file;
+            const reader = new FileReader();
+            reader.readAsDataURL(compressed);
+            reader.onloadend = async () => {
+                const roomId = [auth.currentUser.uid, activeChatId].sort().join('_');
+                await db.collection("messages").add({
+                    roomId,
+                    senderId: auth.currentUser.uid,
+                    mediaUrl: reader.result,
+                    type: type,
+                    text: "",
+                    date: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                showToast("✅ Envoyé !");
+            };
+        } catch(e) {
+            showToast("❌ Erreur d'envoi");
+        }
+        event.target.value = '';
+    }
+
+    function closeChat() {
+        document.getElementById('chatWindow').classList.add('hidden');
+        if (unsubscribeChat) unsubscribeChat();
+        }
         
