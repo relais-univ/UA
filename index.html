@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UA Social - Université de l'Unité Africaine</title>
+    
+    <!-- CSS & Frameworks -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" sizes="192x192" href="logo-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="logo-512.png">
+    
+    <!-- Bibliothèques JS -->
+    <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.min.js"></script>
+    
+    <!-- Firebase SDKs (compat) -->
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-storage-compat.js"></script>
+    
+    <style>
+        .ua-green { background-color: #008751; }
+        .ua-green-text { color: #008751; }
+        .active-nav { color: #008751 !important; border-top: 3px solid #008751; }
+        
+        .view-section { display: none; }
+        .view-section.active { display: block; animation: fadeIn 0.25s ease-out; }
+        @keyframes fadeIn { 
+            from { opacity: 0; transform: translateY(6px); } 
+            to { opacity: 1; transform: translateY(0); } 
+        }
+
+        .card-shadow { box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.08); }
+        .input-pro { width: 100%; background: #f3f4f6; border-radius: 14px; padding: 12px 15px; border: 2px solid transparent; outline: none; transition: 0.2s ease; font-size: 14px; }
+        .input-pro:focus { border-color: #008751; background: white; }
+        .ua-logo { background: white; }
+        .ua-logo span { color: #008751 !important; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        /* Toast Notification Ultra-Fluide */
+        #ua-toast { 
+            position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(100px); 
+            background: #1f2937; color: white; padding: 12px 22px; border-radius: 50px; 
+            font-weight: 600; font-size: 13px; z-index: 1000; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+            opacity: 0; pointer-events: none; display: flex; align-items: center; gap: 10px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+        }
+        #ua-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+
+        /* Navigation Latérale (Sidebar) */
+        .sidebar { 
+            position: fixed; top: 0; left: -285px; width: 280px; height: 100%; 
+            background: white; z-index: 300; transition: left 0.28s cubic-bezier(0.4, 0, 0.2, 1); 
+            box-shadow: 4px 0 15px rgba(0,0,0,0.12); overflow-y: auto; 
+        }
+        .sidebar.open { left: 0; }
+        .sidebar-overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.45); backdrop-filter: blur(2px); z-index: 299; 
+            display: none; transition: opacity 0.28s ease;
+        }
+        .sidebar-overlay.open { display: block; }
+        
+        .menu-item { padding: 14px 20px; border-bottom: 1px solid #f3f4f6; cursor: pointer; transition: background 0.15s; font-weight: 500; font-size: 14px; }
+        .menu-item:active, .menu-item:hover { background: #f9fafb; color: #008751; }
+        
+        .chat-message { animation: messageSlide 0.2s ease-out; }
+        @keyframes messageSlide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .media-modal-content video, .media-modal-content img { max-width: 100%; max-height: 80vh; border-radius: 16px; }
+    </style>
+
+    <!-- SCRIPT DU CONTRÔLEUR UI IMMÉDIAT -->
+    <script>
+        function openSidebar() {
+            document.getElementById('sidebar')?.classList.add('open');
+            document.getElementById('sidebarOverlay')?.classList.add('open');
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar')?.classList.remove('open');
+            document.getElementById('sidebarOverlay')?.classList.remove('open');
+        }
+
+        function switchView(viewId) {
+            const sections = document.querySelectorAll('.view-section');
+            sections.forEach(sec => sec.classList.remove('active'));
+
+            const target = document.getElementById(`view-${viewId}`);
+            if (target) {
+                target.classList.add('active');
+            }
+
+            const titleMap = {
+                'home': "Fil d'actualité",
+                'search': "Espace d'idées 💡",
+                'notes': "Consultation des Notes",
+                'community': "Communauté & Amis",
+                'profile': "Mon Profil Étudiant"
+            };
+            const pageTitle = document.getElementById('pageTitle');
+            if (pageTitle && titleMap[viewId]) pageTitle.innerText = titleMap[viewId];
+
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('ua-toast');
+            const toastMsg = document.getElementById('toast-message');
+            if (!toast || !toastMsg) return;
+
+            toastMsg.innerText = message;
+            toast.classList.add('show');
+
+            if (window.toastTimeout) clearTimeout(window.toastTimeout);
+            window.toastTimeout = setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        function handleLogout() {
+            if (confirm("Voulez-vous vraiment vous déconnecter ?")) {
+                localStorage.removeItem('ua_registered');
+                localStorage.removeItem('ua_user_data');
+                localStorage.removeItem('ua_is_boss');
+                localStorage.removeItem('ua_boss_hidden');
+                if (window.auth) window.auth.signOut();
+                location.reload();
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-100 font-sans pb-24 text-gray-800">
