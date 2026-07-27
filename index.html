@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UA Social - Université de l'Unité Africaine</title>
+    
+    <!-- CSS & Frameworks -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" sizes="192x192" href="logo-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="logo-512.png">
+    
+    <!-- Bibliothèques JS -->
+    <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.min.js"></script>
+    
+    <!-- Firebase SDks (compat) -->
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-storage-compat.js"></script>
+    
+    <style>
+        .ua-green { background-color: #008751; }
+        .ua-green-text { color: #008751; }
+        .active-nav { color: #008751 !important; border-top: 3px solid #008751; }
+        
+        .view-section { display: none; }
+        .view-section.active { display: block; animation: fadeIn 0.25s ease-out; }
+        @keyframes fadeIn { 
+            from { opacity: 0; transform: translateY(6px); } 
+            to { opacity: 1; transform: translateY(0); } 
+        }
+
+        .card-shadow { box-shadow: 0 8px 20px -4px rgba(0, 0, 0, 0.08); }
+        .input-pro { width: 100%; background: #f3f4f6; border-radius: 14px; padding: 12px 15px; border: 2px solid transparent; outline: none; transition: 0.2s ease; font-size: 14px; }
+        .input-pro:focus { border-color: #008751; background: white; }
+        .ua-logo { background: white; }
+        .ua-logo span { color: #008751 !important; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        /* Toast Notification Ultra-Fluide */
+        #ua-toast { 
+            position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(100px); 
+            background: #1f2937; color: white; padding: 12px 22px; border-radius: 50px; 
+            font-weight: 600; font-size: 13px; z-index: 1000; transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+            opacity: 0; pointer-events: none; display: flex; align-items: center; gap: 10px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+        }
+        #ua-toast.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+
+        /* Navigation Latérale (Sidebar) */
+        .sidebar { 
+            position: fixed; top: 0; left: -285px; width: 280px; height: 100%; 
+            background: white; z-index: 300; transition: left 0.28s cubic-bezier(0.4, 0, 0.2, 1); 
+            box-shadow: 4px 0 15px rgba(0,0,0,0.12); overflow-y: auto; 
+        }
+        .sidebar.open { left: 0; }
+        .sidebar-overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.45); backdrop-filter: blur(2px); z-index: 299; 
+            display: none; transition: opacity 0.28s ease;
+        }
+        .sidebar-overlay.open { display: block; }
+        
+        .menu-item { padding: 14px 20px; border-bottom: 1px solid #f3f4f6; cursor: pointer; transition: background 0.15s; font-weight: 500; font-size: 14px; }
+        .menu-item:active, .menu-item:hover { background: #f9fafb; color: #008751; }
+        
+        .chat-message { animation: messageSlide 0.2s ease-out; }
+        @keyframes messageSlide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .media-modal-content video, .media-modal-content img { max-width: 100%; max-height: 80vh; border-radius: 16px; }
+    </style>
+
+    <!-- SCRIPT DU CONTRÔLEUR UI IMMÉDIAT (Pour zéro latence sur les clics) -->
+    <script>
+        function openSidebar() {
+            document.getElementById('sidebar')?.classList.add('open');
+            document.getElementById('sidebarOverlay')?.classList.add('open');
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar')?.classList.remove('open');
+            document.getElementById('sidebarOverlay')?.classList.remove('open');
+        }
+
+        function switchView(viewId) {
+            const sections = document.querySelectorAll('.view-section');
+            sections.forEach(sec => sec.classList.remove('active'));
+
+            const target = document.getElementById(`view-${viewId}`);
+            if (target) {
+                target.classList.add('active');
+            }
+
+            // Mise à jour automatique des titres
+            const titleMap = {
+                'home': "Fil d'actualité",
+                'search': "Espace d'idées 💡",
+                'notes': "Consultation des Notes",
+                'community': "Communauté & Amis",
+                'profile': "Mon Profil Étudiant"
+            };
+            const pageTitle = document.getElementById('pageTitle');
+            if (pageTitle && titleMap[viewId]) pageTitle.innerText = titleMap[viewId];
+
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('ua-toast');
+            const toastMsg = document.getElementById('toast-message');
+            if (!toast || !toastMsg) return;
+
+            toastMsg.innerText = message;
+            toast.classList.add('show');
+
+            if (window.toastTimeout) clearTimeout(window.toastTimeout);
+            window.toastTimeout = setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        function handleLogout() {
+            if (confirm("Voulez-vous vraiment vous déconnecter ?")) {
+                localStorage.removeItem('ua_registered');
+                localStorage.removeItem('ua_user_data');
+                localStorage.removeItem('ua_is_boss');
+                localStorage.removeItem('ua_boss_hidden');
+                if (window.auth) window.auth.signOut();
+                location.reload();
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-100 font-sans pb-24 text-gray-800">
+
+    <!-- Toast Notification Global -->
+    <div id="ua-toast">
+        <i class="fas fa-info-circle text-yellow-400"></i>
+        <span id="toast-message">Action effectuée</span>
+    </div>
+
+    <!-- Overlay & Barre Latérale (Sidebar) -->
+    <div id="sidebarOverlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div id="sidebar" class="sidebar">
+        <div class="ua-green text-white p-5 text-center font-bold text-lg flex items-center justify-center gap-2 shadow-sm">
+            <i class="fas fa-university"></i>
+            <span>UA Social</span>
+        </div>
+
+        <!-- Badge dynamique si l'utilisateur est le PDG Boss -->
+        <div id="sidebar-boss-badge" class="hidden p-3 bg-amber-500/10 border-b border-amber-200 text-amber-800 text-xs font-bold text-center flex items-center justify-center gap-2">
+            👑 <span>Mode PDG Administrateur</span>
+        </div>
+
+        <div class="py-2">
+            <div class="menu-item flex items-center gap-3" onclick="closeSidebar(); switchView('home')">
+                <i class="fas fa-home w-5 text-green-700"></i> <span>Accueil</span>
+            </div>
+            <div class="menu-item flex items-center gap-3" onclick="closeSidebar(); switchView('search')">
+                <i class="fas fa-lightbulb w-5 text-yellow-600"></i> <span>Espace 💡</span>
+            </div>
+            <div class="menu-item flex items-center gap-3" onclick="closeSidebar(); switchView('notes')">
+                <i class="fas fa-graduation-cap w-5 text-blue-600"></i> <span>Mes notes</span>
+            </div>
+            <div class="menu-item flex items-center gap-3" onclick="closeSidebar(); switchView('community')">
+                <i class="fas fa-users w-5 text-indigo-600"></i> <span>Amis & Discussions</span>
+            </div>
+            <div class="menu-item flex items-center gap-3" onclick="closeSidebar(); switchView('profile')">
+                <i class="fas fa-user-circle w-5 text-gray-600"></i> <span>Mon profil</span>
+            </div>
+            <div class="menu-item flex items-center gap-3 text-red-600 mt-4 border-t border-gray-100" onclick="closeSidebar(); handleLogout()">
+                <i class="fas fa-sign-out-alt w-5"></i> <span>Déconnexion</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- En-tête Principal Fixe (Header) -->
+    <header class="ua-green text-white p-4 sticky top-0 z-50 shadow-md flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <i class="fas fa-bars text-xl cursor-pointer hover:opacity-80 transition p-1" onclick="openSidebar()"></i>
+            <div class="ua-logo w-9 h-9 bg-white rounded-full flex items-center justify-center text-lg font-black shadow-inner">
+                <span>U</span><span>A</span>
+            </div>
+            <div>
+                <h1 id="pageTitle" class="text-base font-bold leading-tight">Fil d'actualité</h1>
+                <div class="flex items-center gap-1.5 text-xs">
+                    <i id="statusIcon" class="fas fa-circle text-green-400 text-[8px] animate-pulse"></i>
+                    <span id="statusText" class="text-green-100 text-[10px] font-medium">En ligne</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3.5">
+            <i class="fas fa-bell text-lg cursor-pointer hover:opacity-80" onclick="showToast('🔔 Vos notifications sont à jour')"></i>
+            <i class="fas fa-paper-plane text-lg cursor-pointer hover:opacity-80" onclick="switchView('community')"></i>
+            <button onclick="installApp()" id="installBtn" class="text-xs bg-white text-green-800 px-3 py-1.5 rounded-full font-bold hover:bg-green-50 transition shadow-sm flex items-center gap-1">
+                <i class="fas fa-download text-[10px]"></i> App
+            </button>
+        </div>
+    </header>
