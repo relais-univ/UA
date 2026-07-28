@@ -411,4 +411,145 @@
         loadMoreArticles();
     }
             </script>
+                <script>
+    // ========== STORIES AVEC LOGIQUE REGROUPÉE ET NOM DYNAMIQUE ("VOUS") ==========
+    let activeStoriesList = [];
+    let currentStoryIndex = 0;
+
+    async function postStory(e) {
+        const file = e.target.files[0];
+        if (!file || !currentUser) return showToast("❌ Connectez-vous d'abord");
+        
+        const isVideo = file.type.startsWith('video/');
+        const isImage = file.type.startsWith('image/');
+        if (!isVideo && !isImage) return showToast("❌ Images ou vidéos uniquement");
+        
+        showToast("⏳ Optimisation de la story...");
+        
+        try {
+            const userData = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+            let fileToProcess = file;
+
+            if (isImage) {
+                fileToProcess = await imageCompression(file, {
+                    maxSizeMB: 0.15,
+                    maxWidthOrHeight: 600,
+                    useWebWorker: true
+                });
+            } else if (isVideo && file.size > 2.5 * 1024 * 1024) {
+                return showToast("❌ Vidéo de story limitée à 2.5 Mo maximum");
+            }
+
+            const reader = new FileReader();
+            reader.readAsDataURL(fileToProcess);
+            reader.onloadend = async () => {
+                const base64Media = reader.result;
+                
+                showToast("⚡ Publication instantanée...");
+                
+                await db.collection("stories").add({
+                    mediaUrl: base64Media,
+                    mediaType: isVideo ? 'video' : 'image',
+                    userName: `${userData.prenom || ''} ${userData.nom || ''}`.trim() || "Étudiant UA",
+                    userAvatar: userData.avatar || "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+                    userId: currentUser.uid,
+                    date: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                
+                showToast("✨ Story publiée avec succès !");
+            };
+        } catch (error) {
+            showToast("❌ Échec de la publication de la story");
+        }
+        e.target.value = '';
+    }
+
+    function openStoryGroup(storiesGroup) {
+        if (!storiesGroup || !storiesGroup.length) return;
+        activeStoriesList = storiesGroup;
+        currentStoryIndex = 0;
+        showCurrentStory();
+    }
+
+    function showCurrentStory() {
+        if (currentStoryIndex >= activeStoriesList.length) {
+            closeMediaModal();
+            return;
+        }
+
+        const s = activeStoriesList[currentStoryIndex];
+        const modal = document.getElementById('mediaModal');
+        const content = document.getElementById('mediaContent');
+        if (content && modal) {
+            const mediaHtml = s.mediaType === 'video' 
+                ? `<video src="${s.mediaUrl}" controls autoplay onended="nextStory()" class="max-w-full max-h-[80vh] rounded-2xl shadow-2xl"></video>`
+                : `<img src="${s.mediaUrl}" onclick="nextStory()" class="max-w-full max-h-[80vh] rounded-2xl shadow-2xl cursor-pointer">`;
             
+            content.innerHTML = `
+                <div class="relative flex flex-col items-center">
+                    <div class="absolute top-2 left-2 bg-black/60 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2 z-20">
+                        <img src="${s.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-5 h-5 rounded-full">
+                        <span>${s.userId === currentUser?.uid ? 'Vous' : s.userName}</span>
+                        <span class="text-[9px] text-gray-300">(${currentStoryIndex + 1}/${activeStoriesList.length})</span>
+                    </div>
+                    ${mediaHtml}
+                </div>`;
+            modal.classList.remove('hidden');
+        }
+    }
+
+    function nextStory() {
+        currentStoryIndex++;
+        showCurrentStory();
+    }
+
+    function closeMediaModal() {
+        const content = document.getElementById('mediaContent');
+        if (content) content.innerHTML = '';
+        document.getElementById('mediaModal')?.classList.add('hidden');
+        activeStoriesList = [];
+        currentStoryIndex = 0;
+    }
+
+    async function supprimerAnciennesStories() {
+        const ilYa24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        try {
+            const snap = await db.collection("stories").where("date", "<", ilYa24h).get();
+            snap.forEach(doc => doc.ref.delete());
+        } catch (err) { /* Silencieux */ }
+    }
+
+    // ========== DIRECT AUDIOVISUEL EN TEMPS RÉEL ==========
+    function listenZenSpace() {
+        db.collection("tv").doc("flux").onSnapshot(doc => {
+            const player = document.getElementById('ua-tv-player');
+            const displayTitle = document.getElementById('video-title-display');
+            
+            if (doc.exists && player) {
+                const data = doc.data();
+                const newVideoUrl = data.videoUrl || "";
+                if (displayTitle) displayTitle.innerText = data.title || "Diffusion académique en cours";
+                currentVideoUrl = newVideoUrl;
+                
+                if (newVideoUrl && player.src !== newVideoUrl) {
+                    player.src = newVideoUrl;
+                    player.load();
+                } else if (!newVideoUrl) {
+                    player.src = "";
+                }
+            }
+        }, () => {});
+    }
+
+    function downloadCurrentVideo() {
+        if (!currentVideoUrl) return showToast("❌ Aucune vidéo disponible");
+        showToast("📥 Téléchargement démarré...");
+        const a = document.createElement('a');
+        a.href = currentVideoUrl;
+        a.download = `UA_TV_${Date.now()}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+                </script>
+
