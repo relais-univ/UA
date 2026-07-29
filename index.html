@@ -775,4 +775,369 @@
         document.body.removeChild(a);
     }
             </script>
+<script>
+    // ========== AMIS & DISCUSSIONS EN TEMPS RÉEL ==========
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+
+    function loadFriends() {
+        db.collection("users").get().then(snap => {
+            const list = document.getElementById('friendsList');
+            if (!list) return;
+            list.innerHTML = "";
+            snap.forEach(doc => {
+                const u = doc.data();
+                if (currentUser && doc.id === currentUser.uid) return;
+                const nomComplet = `${u.prenom || ''} ${u.nom || ''}`.trim() || 'Étudiant UA';
+                list.innerHTML += `
+                    <div class="friend-card flex items-center gap-4 p-4 hover:bg-gray-50 cursor-pointer transition" data-name="${nomComplet.toLowerCase()}" onclick="startChat('${doc.id}', '${nomComplet.replace(/'/g, "\\'")}')">
+                        <img src="${u.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-12 h-12 rounded-full object-cover border-2 border-green-500 shadow-sm">
+                        <div class="flex-1">
+                            <h4 class="font-bold text-gray-800">${nomComplet.replace(/</g, '&lt;')}</h4>
+                            <p class="text-[10px] text-green-600 font-semibold">Étudiant UA</p>
+                        </div>
+                        <i class="fas fa-comment-dots text-green-600 text-lg"></i>
+                    </div>`;
+            });
+        });
+    }
+
+    function filterFriends() {
+        const query = document.getElementById('searchFriend')?.value.toLowerCase().trim() || "";
+        const cards = document.querySelectorAll('.friend-card');
+        cards.forEach(card => {
+            const name = card.getAttribute('data-name') || "";
+            if (name.includes(query)) {
+                card.style.display = 'flex';
+            } else {
+                card.style.display = 'none';
+            }
+        });
+    }
+
+    function startChat(amiId, amiNom) {
+        activeChatId = amiId;
+        document.getElementById('chatPartnerName').innerText = amiNom;
+        document.getElementById('chatWindow').classList.remove('hidden');
+        const roomId = [currentUser.uid, amiId].sort().join('_');
+        
+        if (unsubscribeChat) unsubscribeChat();
+        
+        unsubscribeChat = db.collection("messages")
+            .where("roomId", "==", roomId)
+            .orderBy("date", "asc")
+            .onSnapshot(snap => {
+                const box = document.getElementById('chatMessages');
+                if (!box) return;
+                box.innerHTML = "";
+                snap.forEach(doc => {
+                    const m = doc.data();
+                    const isMe = m.senderId === currentUser.uid;
+                    const msgElement = document.createElement('div');
+                    msgElement.className = `max-w-[80%] chat-message ${isMe ? 'self-end bg-green-600 text-white rounded-l-2xl rounded-tr-2xl' : 'self-start bg-white border text-gray-800 rounded-r-2xl rounded-tl-2xl shadow-sm'} p-3 text-sm`;
+                    
+                    if (m.type === 'image') {
+                        msgElement.innerHTML = `<img src="${m.mediaUrl}" class="rounded-xl max-w-full max-h-48 object-cover cursor-pointer" onclick="openImageModal('${m.mediaUrl}')">`;
+                    } else if (m.type === 'video') {
+                        msgElement.innerHTML = `<video src="${m.mediaUrl}" controls class="rounded-xl max-w-full max-h-48"></video>`;
+                    } else if (m.type === 'audio') {
+                        msgElement.innerHTML = `<audio src="${m.mediaUrl}" controls class="max-w-full"></audio>`;
+                    } else {
+                        msgElement.textContent = m.text || '';
+                    }
+                    
+                    box.appendChild(msgElement);
+                });
+                box.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
+            });
+    }
+
+    async function sendMessage() {
+        const input = document.getElementById('chatInput');
+        const text = input.value.trim();
+        if (!text || !activeChatId) return;
+        
+        const roomId = [currentUser.uid, activeChatId].sort().join('_');
+        input.value = "";
+        
+        await db.collection("messages").add({ 
+            roomId, 
+            senderId: currentUser.uid, 
+            text: text, 
+            type: 'text',
+            date: firebase.firestore.FieldValue.serverTimestamp() 
+        });
+    }
+
+    async function sendChatMedia(e) {
+        const file = e.target.files[0];
+        if (!file || !activeChatId) return;
+        
+        showToast("⏳ Envoi du média...");
+        const isVideo = file.type.startsWith('video/');
+        let fileToProcess = file;
+
+        if (file.type.startsWith('image/')) {
+            fileToProcess = await imageCompression(file, { maxSizeMB: 0.2, maxWidthOrHeight: 800, useWebWorker: true });
+        }
+
+        const reader = new FileReader();
+        reader.readAsDataURL(fileToProcess);
+        reader.onloadend = async () => {
+            const roomId = [currentUser.uid, activeChatId].sort().join('_');
+            await db.collection("messages").add({
+                roomId,
+                senderId: currentUser.uid,
+                mediaUrl: reader.result,
+                type: isVideo ? 'video' : 'image',
+                date: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            showToast("✅ Média envoyé !");
+        };
+        e.target.value = '';
+    }
+
+    async function toggleRecordVoice() {
+        const btn = document.getElementById('voiceBtn');
+        if (!isRecording) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const reader = new FileReader();
+                    reader.readAsDataURL(audioBlob);
+                    reader.onloadend = async () => {
+                        if (!activeChatId) return;
+                        const roomId = [currentUser.uid, activeChatId].sort().join('_');
+                        await db.collection("messages").add({
+                            roomId,
+                            senderId: currentUser.uid,
+                            mediaUrl: reader.result,
+                            type: 'audio',
+                            date: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                        showToast("🎙️ Message vocal envoyé !");
+                    };
+                };
+                
+                mediaRecorder.start();
+                isRecording = true;
+                btn.classList.add('text-red-600', 'animate-pulse');
+                showToast("🎙️ Enregistrement...");
+            } catch (err) {
+                showToast("❌ Accès au micro refusé");
+            }
+        } else {
+            mediaRecorder.stop();
+            isRecording = false;
+            btn.classList.remove('text-red-600', 'animate-pulse');
+        }
+    }
+
+    function closeChat() {
+        document.getElementById('chatWindow').classList.add('hidden');
+        if (unsubscribeChat) unsubscribeChat();
+    }
+
+    // ========== PROFIL ET RÉSULTATS ACADÉMIQUES ==========
+    async function registerUser() {
+        const nom = document.getElementById('reg-nom').value.trim();
+        const prenom = document.getElementById('reg-prenom').value.trim();
+        const password = document.getElementById('reg-password').value.trim();
+        
+        if (!nom || !prenom || !password) return showToast("⚠️ Nom, Prénom et Mot de passe requis");
+        
+        const savedData = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('ua_user_data')) || {};
+        const userData = { 
+            nom, 
+            prenom, 
+            password, 
+            avatar: savedData.avatar || "https://cdn-icons-png.flaticon.com/512/149/149071.png", 
+            uid: currentUser ? currentUser.uid : null,
+            date: firebase.firestore.FieldValue.serverTimestamp() 
+        };
+        
+        localStorage.setItem('user_profile', JSON.stringify(userData));
+        localStorage.setItem('ua_registered', 'true');
+        
+        if (currentUser) {
+            await db.collection("users").doc(currentUser.uid).set(userData, { merge: true });
+        }
+        updateProfileUI(userData);
+        showToast("✅ Compte enregistré avec succès !");
+        switchView('home');
+    }
+
+    async function loginUser() {
+        const nom = document.getElementById('reg-nom').value.trim().toLowerCase();
+        const prenom = document.getElementById('reg-prenom').value.trim().toLowerCase();
+        const password = document.getElementById('reg-password').value.trim();
+
+        if (!nom || !prenom || !password) return showToast("⚠️ Remplissez tous les champs pour vous connecter");
+
+        showToast("🔍 Vérification des identifiants...");
+        try {
+            const snap = await db.collection("users").get();
+            let userFound = null;
+
+            snap.forEach(doc => {
+                const u = doc.data();
+                if ((u.nom || '').toLowerCase() === nom && 
+                    (u.prenom || '').toLowerCase() === prenom && 
+                    u.password === password) {
+                    userFound = { ...u, uid: doc.id };
+                }
+            });
+
+            if (userFound) {
+                localStorage.setItem('user_profile', JSON.stringify(userFound));
+                localStorage.setItem('ua_registered', 'true');
+                updateProfileUI(userFound);
+                showToast(`🎉 Bon retour, ${userFound.prenom} !`);
+                switchView('home');
+            } else {
+                showToast("❌ Identifiants ou mot de passe incorrects");
+            }
+        } catch (err) {
+            showToast("❌ Erreur lors de la connexion");
+        }
+    }
+
+    async function previewImage(e, instant = false) {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        try {
+            const compressedFile = await imageCompression(file, { maxSizeMB: 0.1, maxWidthOrHeight: 400, useWebWorker: true });
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                const url = ev.target.result;
+                const tempAv = document.getElementById('temp-avatar');
+                const userImg = document.getElementById('user-img');
+                const myStoryAv = document.getElementById('my-story-avatar');
+
+                if (tempAv) tempAv.src = url;
+                if (userImg) userImg.src = url;
+                if (myStoryAv) myStoryAv.src = url;
+                
+                let data = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('ua_user_data')) || {};
+                data.avatar = url;
+                localStorage.setItem('user_profile', JSON.stringify(data));
+                
+                if (instant && currentUser) {
+                    await db.collection("users").doc(currentUser.uid).set(data, { merge: true });
+                    showToast("📸 Photo mise à jour !");
+                }
+            };
+            reader.readAsDataURL(compressedFile);
+        } catch (error) { /* Silencieux */ }
+    }
+
+    function updateProfileUI(data) {
+        const regUi = document.getElementById('register-ui');
+        const profUi = document.getElementById('profile-ui');
+        if (regUi) regUi.classList.add('hidden');
+        if (profUi) profUi.classList.remove('hidden');
+
+        const fullNameElem = document.getElementById('user-full-name');
+        if (fullNameElem) fullNameElem.innerText = `${data.prenom || ''} ${data.nom || ''}`;
+
+        if (data.avatar) {
+            const userImg = document.getElementById('user-img');
+            const myStoryAvatar = document.getElementById('my-story-avatar');
+            if (userImg) userImg.src = data.avatar;
+            if (myStoryAvatar) myStoryAvatar.src = data.avatar;
+        }
+    }
+
+    async function searchNotes() {
+        const ine = document.getElementById('matSearch').value.trim().toUpperCase();
+        const res = document.getElementById('resultArea');
+        if (!ine) return showToast("Entrez votre INE");
+        
+        res.innerHTML = '<div class="text-center text-gray-500">🔍 Recherche...</div>';
+        try {
+            const snap = await db.collection("notes").where("ine", "==", ine).get();
+            if (snap.empty) {
+                res.innerHTML = `<div class="bg-blue-50 p-6 rounded-2xl text-center"><p class="font-bold text-blue-700">📭 Aucun résultat pour l'INE : ${ine}</p></div>`;
+                return;
+            }
+            let html = `<div class="space-y-4">`;
+            snap.forEach(doc => {
+                const n = doc.data();
+                html += `<div class="bg-white rounded-2xl border p-4 text-left shadow-sm">
+                            <div class="font-bold text-green-800">📚 ${(n.matiere || "Sans nom").replace(/</g, '&lt;')}</div>
+                            <div class="text-2xl font-black text-green-700">${n.note || "?"}/20</div>
+                            ${n.commentaire ? `<div class="text-sm italic text-gray-500 mt-1">“${n.commentaire.replace(/</g, '&lt;')}”</div>` : ''}
+                        </div>`;
+            });
+            html += `</div>`;
+            res.innerHTML = html;
+        } catch (error) {
+            res.innerHTML = `<div class="text-red-500">❌ Consultation indisponible actuellement</div>`;
+        }
+    }
+
+    // ========== CHARGEMENT DES STORIES REGROUPÉES ET INITIALISATION ==========
+    function chargerDonneesGlobales() {
+        // Restaurer la session locale si elle existe
+        const savedProfileStr = localStorage.getItem('user_profile');
+        if (savedProfileStr) {
+            const savedProfile = JSON.parse(savedProfileStr);
+            updateProfileUI(savedProfile);
+        }
+
+        supprimerAnciennesStories();
+        loadInitialFeed();
+        
+        db.collection("stories").orderBy("date", "asc").onSnapshot(snap => {
+            const container = document.getElementById('stories-container');
+            if (!container) return;
+            container.innerHTML = "";
+            
+            const groupedStories = {};
+            
+            snap.forEach(doc => {
+                const s = { id: doc.id, ...doc.data() };
+                if (!groupedStories[s.userId]) {
+                    groupedStories[s.userId] = [];
+                }
+                groupedStories[s.userId].push(s);
+            });
+
+            Object.keys(groupedStories).forEach(userId => {
+                const userStories = groupedStories[userId];
+                const lastStory = userStories[userStories.length - 1];
+                const isMe = currentUser && userId === currentUser.uid;
+                
+                if (isMe) {
+                    const myStoryAvatar = document.getElementById('my-story-avatar');
+                    if (myStoryAvatar && lastStory.userAvatar) myStoryAvatar.src = lastStory.userAvatar;
+                } else {
+                    const storyCard = document.createElement('div');
+                    storyCard.className = "flex-shrink-0 w-16 text-center cursor-pointer";
+                    storyCard.onclick = () => openStoryGroup(userStories);
+                    storyCard.innerHTML = `
+                        <div class="story-ring rounded-full w-14 h-14 mx-auto">
+                            <img src="${lastStory.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-full h-full rounded-full object-cover">
+                        </div>
+                        <span class="text-[10px] mt-1 block font-bold truncate">${(lastStory.userName || 'Étudiant').replace(/</g, '&lt;')}</span>
+                    `;
+                    container.appendChild(storyCard);
+                }
+            });
+        });
+    }
+
+    function installApp() {
+        showToast("📲 Installation disponible via le menu navigateur (Ajouter à l'écran d'accueil)");
+    }
+    </script>
+</body>
+</html>
 
