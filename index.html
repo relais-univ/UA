@@ -521,4 +521,258 @@
         loadMoreArticles();
     }
             </script>
+<script>
+    // ========== STORIES ET GESTION DES VUES EN TEMPS RÉEL ==========
+    let activeStoriesList = [];
+    let currentStoryIndex = 0;
+
+    async function postStory(e) {
+        const file = e.target.files[0];
+        if (!file || !currentUser) return showToast("❌ Connectez-vous d'abord");
+        
+        const isVideo = file.type.startsWith('video/');
+        const isImage = file.type.startsWith('image/');
+        if (!isVideo && !isImage) return showToast("❌ Images ou vidéos uniquement");
+        
+        showToast("⏳ Optimisation de la story...");
+        
+        try {
+            const userData = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('ua_user_data')) || {};
+            let fileToProcess = file;
+
+            if (isImage) {
+                fileToProcess = await imageCompression(file, {
+                    maxSizeMB: 0.15,
+                    maxWidthOrHeight: 600,
+                    useWebWorker: true
+                });
+            } else if (isVideo && file.size > 2.5 * 1024 * 1024) {
+                return showToast("❌ Vidéo de story limitée à 2.5 Mo maximum");
+            }
+
+            const reader = new FileReader();
+            reader.readAsDataURL(fileToProcess);
+            reader.onloadend = async () => {
+                const base64Media = reader.result;
+                
+                showToast("⚡ Publication instantanée...");
+                
+                const authorName = `${userData.prenom || ''} ${userData.nom || ''}`.trim() || "Étudiant UA";
+                const authorAvatar = userData.avatar || "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+
+                await db.collection("stories").add({
+                    mediaUrl: base64Media,
+                    mediaType: isVideo ? 'video' : 'image',
+                    userName: authorName,
+                    userAvatar: authorAvatar,
+                    userId: currentUser.uid,
+                    views: [], // Liste d'objets { uid, userName, userAvatar, viewedAt }
+                    date: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                
+                showToast("✨ Story publiée avec succès !");
+            };
+        } catch (error) {
+            showToast("❌ Échec de la publication de la story");
+        }
+        e.target.value = '';
+    }
+
+    // Visionner uniquement ses propres stories (clic sur photo de profil "Vous")
+    async function viewMyStories() {
+        if (!currentUser) return showToast("❌ Veuillez vous connecter.");
+        
+        try {
+            const snap = await db.collection("stories")
+                .where("userId", "==", currentUser.uid)
+                .orderBy("date", "desc")
+                .get();
+
+            if (snap.empty) {
+                showToast("ℹ️ Vous n'avez aucune story active.");
+                return;
+            }
+
+            const myStories = [];
+            snap.forEach(doc => {
+                myStories.push({ id: doc.id, ...doc.data() });
+            });
+
+            openStoryGroup(myStories);
+        } catch (err) {
+            showToast("❌ Erreur de chargement de vos stories");
+        }
+    }
+
+    function openStoryGroup(storiesGroup) {
+        if (!storiesGroup || !storiesGroup.length) return;
+        activeStoriesList = storiesGroup;
+        currentStoryIndex = 0;
+        showCurrentStory();
+    }
+
+    async function showCurrentStory() {
+        if (currentStoryIndex >= activeStoriesList.length) {
+            closeMediaModal();
+            return;
+        }
+
+        const s = activeStoriesList[currentStoryIndex];
+        const modal = document.getElementById('mediaModal');
+        const content = document.getElementById('mediaContent');
+        
+        // Enregistrer la vue si la story n'appartient pas à l'utilisateur courant
+        if (currentUser && s.userId !== currentUser.uid && s.id) {
+            recordStoryView(s);
+        }
+
+        if (content && modal) {
+            const isMyStory = currentUser && s.userId === currentUser.uid;
+            const viewsCount = (s.views && Array.isArray(s.views)) ? s.views.length : 0;
+
+            const mediaHtml = s.mediaType === 'video' 
+                ? `<video src="${s.mediaUrl}" controls autoplay onended="nextStory()" class="max-w-full max-h-[75vh] rounded-2xl shadow-2xl"></video>`
+                : `<img src="${s.mediaUrl}" onclick="nextStory()" class="max-w-full max-h-[75vh] rounded-2xl shadow-2xl cursor-pointer">`;
+            
+            // Bouton des vues en bas si c'est notre propre story
+            const viewsBtnHtml = isMyStory ? `
+                <div class="mt-3 flex justify-center">
+                    <button onclick="openStoryViewsModal(${currentStoryIndex})" class="bg-black/70 text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 hover:bg-black transition active:scale-95 border border-white/20">
+                        <i class="fas fa-eye text-green-400"></i> ${viewsCount} vue${viewsCount > 1 ? 's' : ''}
+                    </button>
+                </div>` : '';
+
+            content.innerHTML = `
+                <div class="relative flex flex-col items-center max-w-sm mx-auto">
+                    <div class="w-full flex items-center justify-between bg-black/60 text-white px-3 py-2 rounded-t-2xl text-xs font-bold mb-1">
+                        <div class="flex items-center gap-2">
+                            <img src="${s.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-6 h-6 rounded-full object-cover">
+                            <span>${isMyStory ? 'Vous' : s.userName}</span>
+                        </div>
+                        <span class="text-[10px] text-gray-300">${currentStoryIndex + 1}/${activeStoriesList.length}</span>
+                    </div>
+                    ${mediaHtml}
+                    ${viewsBtnHtml}
+                </div>`;
+            
+            modal.classList.remove('hidden');
+        }
+    }
+
+    // Enregistrement d'une nouvelle vue dans Firestore
+    async function recordStoryView(storyObj) {
+        try {
+            const userData = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('ua_user_data')) || {};
+            const viewEntry = {
+                uid: currentUser.uid,
+                userName: `${userData.prenom || ''} ${userData.nom || ''}`.trim() || "Étudiant",
+                userAvatar: userData.avatar || "https://cdn-icons-png.flaticon.com/512/149/149071.png"
+            };
+
+            const storyRef = db.collection("stories").doc(storyObj.id);
+            const doc = await storyRef.get();
+            
+            if (doc.exists) {
+                const viewsArr = doc.data().views || [];
+                const alreadyViewed = viewsArr.some(v => v.uid === currentUser.uid);
+                
+                if (!alreadyViewed) {
+                    await storyRef.update({
+                        views: firebase.firestore.FieldValue.arrayUnion(viewEntry)
+                    });
+                }
+            }
+        } catch (e) { /* Silencieux */ }
+    }
+
+    // Modal de visualisation de la liste des spectateurs
+    function openStoryViewsModal(index) {
+        const s = activeStoriesList[index];
+        if (!s) return;
+
+        const modal = document.getElementById('storyViewsModal');
+        const list = document.getElementById('storyViewsList');
+        const headerCount = document.getElementById('viewsCountHeader');
+
+        const views = s.views || [];
+        if (headerCount) headerCount.innerText = views.length;
+
+        if (list) {
+            if (views.length === 0) {
+                list.innerHTML = `<p class="text-xs text-gray-500 text-center py-6">Aucune vue pour le moment.</p>`;
+            } else {
+                list.innerHTML = views.map(v => `
+                    <div class="flex items-center gap-3 py-3">
+                        <img src="${v.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-9 h-9 rounded-full object-cover border">
+                        <div class="flex-1">
+                            <h5 class="text-xs font-bold text-gray-800">${(v.userName || "Étudiant UA").replace(/</g, '&lt;')}</h5>
+                            <span class="text-[9px] text-green-600 font-semibold">a vu votre statut</span>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        if (modal) modal.classList.remove('hidden');
+    }
+
+    function closeStoryViewsModal() {
+        document.getElementById('storyViewsModal')?.classList.add('hidden');
+    }
+
+    function nextStory() {
+        currentStoryIndex++;
+        showCurrentStory();
+    }
+
+    function closeMediaModal() {
+        const content = document.getElementById('mediaContent');
+        if (content) content.innerHTML = '';
+        document.getElementById('mediaModal')?.classList.add('hidden');
+        closeStoryViewsModal();
+        activeStoriesList = [];
+        currentStoryIndex = 0;
+    }
+
+    async function supprimerAnciennesStories() {
+        const ilYa24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        try {
+            const snap = await db.collection("stories").where("date", "<", ilYa24h).get();
+            snap.forEach(doc => doc.ref.delete());
+        } catch (err) { /* Silencieux */ }
+    }
+
+    // ========== DIRECT AUDIOVISUEL EN TEMPS RÉEL (UA TV) ==========
+    function listenZenSpace() {
+        db.collection("tv").doc("flux").onSnapshot(doc => {
+            const player = document.getElementById('ua-tv-player');
+            const displayTitle = document.getElementById('video-title-display');
+            
+            if (doc.exists && player) {
+                const data = doc.data();
+                const newVideoUrl = data.videoUrl || "";
+                if (displayTitle) displayTitle.innerText = data.title || "Diffusion académique en cours";
+                currentVideoUrl = newVideoUrl;
+                
+                if (newVideoUrl && player.src !== newVideoUrl) {
+                    player.src = newVideoUrl;
+                    player.load();
+                } else if (!newVideoUrl) {
+                    player.src = "";
+                }
+            }
+        }, () => {});
+    }
+
+    function downloadCurrentVideo() {
+        if (!currentVideoUrl) return showToast("❌ Aucune vidéo disponible");
+        showToast("📥 Téléchargement démarré...");
+        const a = document.createElement('a');
+        a.href = currentVideoUrl;
+        a.download = `UA_TV_${Date.now()}.mp4`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+            </script>
 
