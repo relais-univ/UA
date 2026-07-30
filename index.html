@@ -957,4 +957,27 @@
                 showToast("❌ Identifiants incorrects.");
             }
         }
-        
+                function chargerDonneesGlobales() {
+            const profileStr = localStorage.getItem('user_profile');
+            if (profileStr) {
+                const p = JSON.parse(profileStr);
+                const pName = document.getElementById('profile-name');
+                const pEmail = document.getElementById('profile-email');
+                const pAvatar = document.getElementById('profile-avatar');
+                
+                if (pName) pName.innerText = `${p.prenom || ''} ${p.nom || ''}`.trim() || "Étudiant UA";
+                if (pEmail) pEmail.innerText = p.email || "";
+                if (pAvatar && p.avatar) pAvatar.src = p.avatar;
+            }
+
+            listenToStories();
+        }
+
+        // ========== INITIALISATION ==========
+        window.addEventListener('DOMContentLoaded', () => {
+            switchView('home');
+        });
+    </script>
+</body>
+</html>
+
