@@ -730,4 +730,106 @@
         function closeMediaModal() {
             const content = document.getElementById('mediaContent');
             if (content) content.innerHTML = '';
-            document.getEleme
+            document.getElementById('mediaModal')?.classList.add('hidden');
+        }
+
+        // ========== ECOUTE DES STORIES EN TEMPS REEL ==========
+        function listenToStories() {
+            db.collection("stories")
+                .orderBy("date", "desc")
+                .onSnapshot(snap => {
+                    const storiesBar = document.getElementById('stories-bar');
+                    if (!storiesBar) return;
+
+                    const grouped = {};
+                    snap.forEach(doc => {
+                        const data = { id: doc.id, ...doc.data() };
+                        if (!grouped[data.userId]) grouped[data.userId] = [];
+                        grouped[data.userId].push(data);
+                    });
+
+                    let myProfile = {};
+                    try {
+                        myProfile = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('ua_user_data')) || {};
+                    } catch(e){}
+
+                    let html = `
+                        <div class="flex-shrink-0 flex flex-col items-center gap-1 cursor-pointer">
+                            <label for="storyInput" class="w-14 h-14 rounded-full bg-gradient-to-tr from-green-600 to-emerald-400 p-0.5 shadow-md flex items-center justify-center text-white relative active:scale-95 transition">
+                                <img src="${myProfile.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-full h-full rounded-full object-cover">
+                                <span class="absolute bottom-0 right-0 bg-green-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold border-2 border-white">+</span>
+                            </label>
+                            <input type="file" id="storyInput" accept="image/*,video/*" class="hidden" onchange="postStory(event)">
+                            <span class="text-[10px] font-bold text-gray-600 truncate max-w-[60px]" onclick="viewMyStories()">Vos statuts</span>
+                        </div>
+                    `;
+
+                    Object.keys(grouped).forEach(uid => {
+                        const userStories = grouped[uid];
+                        const first = userStories[0];
+                        const isMyStory = currentUser && uid === currentUser.uid;
+
+                        if (!isMyStory) {
+                            const encGroup = encodeURIComponent(JSON.stringify(userStories));
+                            html += `
+                                <div class="flex-shrink-0 flex flex-col items-center gap-1 cursor-pointer" onclick="openStoryGroup(JSON.parse(decodeURIComponent('${encGroup}')))">
+                                    <div class="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-green-500 to-emerald-300 shadow-md">
+                                        <img src="${first.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-full h-full rounded-full object-cover border-2 border-white">
+                                    </div>
+                                    <span class="text-[10px] font-medium text-gray-700 truncate max-w-[60px]">${(first.userName || "Étudiant").split(' ')[0]}</span>
+                                </div>
+                            `;
+                        }
+                    });
+
+                    storiesBar.innerHTML = html;
+                }, () => {});
+        }
+
+        // ========== ESPACE ZEN & NOTES ==========
+        function listenZenSpace() {
+            db.collection("zen_posts").orderBy("createdAt", "desc").limit(20)
+                .onSnapshot(snap => {
+                    const feed = document.getElementById('zen-feed');
+                    if (!feed) return;
+                    feed.innerHTML = '';
+                    if (snap.empty) {
+                        feed.innerHTML = `<p class="text-xs text-gray-400 text-center py-8">Aucune pensée partagée pour l'instant.</p>`;
+                        return;
+                    }
+                    snap.forEach(doc => {
+                        const p = doc.data();
+                        feed.innerHTML += `
+                            <div class="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm mb-3">
+                                <div class="flex items-center gap-2 mb-2">
+                                    <img src="${p.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-7 h-7 rounded-full object-cover">
+                                    <span class="text-xs font-bold text-gray-800">${(p.userName || 'Anonyme').replace(/</g, '&lt;')}</span>
+                                </div>
+                                <p class="text-xs text-gray-700 leading-relaxed mb-2">${(p.text || '').replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>
+                            </div>`;
+                    });
+                });
+        }
+
+        async function postZenMessage() {
+            const input = document.getElementById('zenInput');
+            const txt = input?.value.trim();
+            if (!txt) return;
+            if (!currentUser) return showToast("❌ Veuillez vous connecter.");
+
+            const myProfile = JSON.parse(localStorage.getItem('user_profile') || '{}');
+            try {
+                await db.collection("zen_posts").add({
+                    text: txt,
+                    userId: currentUser.uid,
+                    userName: `${myProfile.prenom || ''} ${myProfile.nom || ''}`.trim() || "Étudiant UA",
+                    userAvatar: myProfile.avatar || "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                input.value = '';
+                showToast("Pensée publiée ✨");
+            } catch(e) {
+                showToast("❌ Erreur lors de la publication");
+            }
+        }
+        
