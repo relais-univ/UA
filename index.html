@@ -832,4 +832,129 @@
                 showToast("❌ Erreur lors de la publication");
             }
         }
+                // ========== CHAT & COMMUNAUTE ==========
+        function loadFriends() {
+            db.collection("users").limit(30).onSnapshot(snap => {
+                const list = document.getElementById('friendsList');
+                if (!list) return;
+                list.innerHTML = '';
+                snap.forEach(doc => {
+                    const u = doc.data();
+                    if (currentUser && doc.id === currentUser.uid) return;
+                    list.innerHTML += `
+                        <div class="flex items-center justify-between p-3 bg-white rounded-2xl border border-gray-100 shadow-sm mb-2" onclick="openPrivateChat('${doc.id}', '${(u.prenom || '') + ' ' + (u.nom || '')}')">
+                            <div class="flex items-center gap-3">
+                                <img src="${u.avatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-10 h-10 rounded-full object-cover">
+                                <div>
+                                    <h4 class="text-xs font-bold text-gray-800">${((u.prenom || '') + ' ' + (u.nom || '')).trim() || 'Étudiant UA'}</h4>
+                                    <span class="text-[10px] text-gray-400">${u.filiere || 'Université'}</span>
+                                </div>
+                            </div>
+                            <button class="w-8 h-8 rounded-full bg-green-50 text-green-600 flex items-center justify-center text-xs"><i class="fas fa-comment"></i></button>
+                        </div>`;
+                });
+            });
+        }
+
+        function openPrivateChat(otherUid, otherName) {
+            if (!currentUser) return showToast("❌ Veuillez vous connecter.");
+            activeChatId = [currentUser.uid, otherUid].sort().join('_');
+            
+            const chatTitle = document.getElementById('chatTitle');
+            if (chatTitle) chatTitle.innerText = otherName;
+
+            const chatWin = document.getElementById('chatWindow');
+            if (chatWin) chatWin.classList.remove('hidden');
+
+            if (unsubscribeChat) unsubscribeChat();
+            
+            unsubscribeChat = db.collection("chats").doc(activeChatId).collection("messages")
+                .orderBy("timestamp", "asc")
+                .onSnapshot(snap => {
+                    const msgBox = document.getElementById('chatMessages');
+                    if (!msgBox) return;
+                    msgBox.innerHTML = '';
+                    snap.forEach(doc => {
+                        const m = doc.data();
+                        const isMe = m.senderId === currentUser.uid;
+                        msgBox.innerHTML += `
+                            <div class="flex ${isMe ? 'justify-end' : 'justify-start'} mb-2">
+                                <div class="${isMe ? 'bg-green-600 text-white rounded-tr-none' : 'bg-gray-100 text-gray-800 rounded-tl-none'} text-xs px-3 py-2 rounded-2xl max-w-[75%] shadow-sm">
+                                    ${(m.text || '').replace(/</g, '&lt;')}
+                                </div>
+                            </div>`;
+                    });
+                    msgBox.scrollTop = msgBox.scrollHeight;
+                });
+        }
+
+        function closeChat() {
+            document.getElementById('chatWindow')?.classList.add('hidden');
+            if (unsubscribeChat) unsubscribeChat();
+            activeChatId = null;
+        }
+
+        async function sendChatMessage() {
+            const input = document.getElementById('chatInput');
+            const txt = input?.value.trim();
+            if (!txt || !activeChatId || !currentUser) return;
+
+            try {
+                await db.collection("chats").doc(activeChatId).collection("messages").add({
+                    text: txt,
+                    senderId: currentUser.uid,
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                input.value = '';
+            } catch(e) {}
+        }
+
+        // ========== AUTHENTIFICATION ET PROFIL ==========
+        async function registerUser() {
+            const email = document.getElementById('auth-email')?.value.trim();
+            const password = document.getElementById('auth-password')?.value.trim();
+            const prenom = document.getElementById('auth-prenom')?.value.trim();
+            const nom = document.getElementById('auth-nom')?.value.trim();
+
+            if (!email || !password || !prenom || !nom) return showToast("⚠️ Veuillez remplir tous les champs.");
+
+            try {
+                const cred = await auth.createUserWithEmailAndPassword(email, password);
+                const userObj = {
+                    uid: cred.user.uid,
+                    email: email,
+                    password: password,
+                    prenom: prenom,
+                    nom: nom,
+                    avatar: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                };
+
+                await db.collection("users").doc(cred.user.uid).set(userObj);
+                localStorage.setItem('user_profile', JSON.stringify(userObj));
+                showToast("Inscription réussie 🎉");
+                location.reload();
+            } catch (err) {
+                showToast("❌ Erreur : " + err.message);
+            }
+        }
+
+        async function loginUser() {
+            const email = document.getElementById('auth-email')?.value.trim();
+            const password = document.getElementById('auth-password')?.value.trim();
+
+            if (!email || !password) return showToast("⚠️ Veuillez saisir votre email et mot de passe.");
+
+            try {
+                const cred = await auth.signInWithEmailAndPassword(email, password);
+                const doc = await db.collection("users").doc(cred.user.uid).get();
+                if (doc.exists) {
+                    localStorage.setItem('user_profile', JSON.stringify(doc.data()));
+                }
+                showToast("Connexion réussie 👋");
+                location.reload();
+            } catch (err) {
+                showToast("❌ Identifiants incorrects.");
+            }
+        }
         
