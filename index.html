@@ -281,4 +281,453 @@
     <div id="mediaModal" class="hidden fixed inset-0 z-[210] bg-black/95 flex items-center justify-center p-4" onclick="closeMediaModal()">
         <div id="mediaContent" class="media-modal-content"></div>
         <button onclick="closeMediaModal()" class="absolute top-4 right-4 text-white text-3xl">&times;</button>
-    </div>
+    </div>    <script>
+        // ========== CONFIGURATION FIREBASE SYNCHRONISÉE ==========
+        const firebaseConfig = {
+            apiKey: "AIzaSyAlxkxSSmmt6hRqqT6qvwHuXHF2q5n-Qxk",
+            authDomain: "faso-opportunites.firebaseapp.com",
+            databaseURL: "https://faso-opportunites-default-rtdb.firebaseio.com",
+            projectId: "faso-opportunites",
+            storageBucket: "faso-opportunites.firebasestorage.app",
+            messagingSenderId: "548784260893",
+            appId: "1:548784260893:web:11894c7a8160dd76e7c3f4",
+            measurementId: "G-9J6PQBBFF8"
+        };
+
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+        const storage = firebase.storage();
+
+        let currentUser = null;
+        let activeChatId = null;
+        let unsubscribeChat = null;
+        let lastArticleDoc = null;
+        let isLoadingMore = false;
+        let allArticlesLoaded = false;
+        let currentVideoUrl = "";
+        let isLoginMode = false;
+
+        const viewsOrder = ['home', 'search', 'notes', 'community', 'profile'];
+        let touchStartX = 0;
+        let touchEndX = 0;
+
+        auth.signInAnonymously().then(cred => {
+            currentUser = cred.user;
+            chargerDonneesGlobales();
+        }).catch(err => console.error("Erreur Auth :", err));
+
+        // ========== SYSTEME TACTILE SWIPE (FACEBOOK / TIKTOK) ==========
+        document.addEventListener('touchstart', e => {
+            touchStartX = e.changedTouches[0].screenX;
+        }, { passive: true });
+
+        document.addEventListener('touchend', e => {
+            touchEndX = e.changedTouches[0].screenX;
+            handleSwipe();
+        }, { passive: true });
+
+        function handleSwipe() {
+            // Ignorer le swipe si un modal ou le chat est ouvert
+            if (!document.getElementById('chatWindow').classList.contains('hidden')) return;
+            if (!document.getElementById('mediaModal').classList.contains('hidden')) return;
+            if (!document.getElementById('logoutModal').classList.contains('hidden')) return;
+
+            const swipeThreshold = 50; 
+            const currentView = getCurrentActiveView();
+            let currentIndex = viewsOrder.indexOf(currentView);
+
+            if (touchStartX - touchEndX > swipeThreshold) {
+                // Swipe vers la gauche -> Onglet suivant
+                if (currentIndex < viewsOrder.length - 1) {
+                    switchView(viewsOrder[currentIndex + 1]);
+                }
+            } else if (touchEndX - touchStartX > swipeThreshold) {
+                // Swipe vers la droite -> Onglet précédent
+                if (currentIndex > 0) {
+                    switchView(viewsOrder[currentIndex - 1]);
+                }
+            }
+        }
+
+        function getCurrentActiveView() {
+            const activeSection = document.querySelector('.view-section.active');
+            return activeSection ? activeSection.id.replace('view-', '') : 'home';
+        }
+
+        // ========== NAVIGATION PROPRE ==========
+        function switchView(v) {
+            let targetView = v;
+            if (v === 'home' || v === 'accueil') targetView = 'home';
+            if (v === 'search' || v === 'zen' || v === '💡') targetView = 'search';
+            if (v === 'notes') targetView = 'notes';
+            if (v === 'community' || v === 'amis') targetView = 'community';
+            if (v === 'profile' || v === 'profil') targetView = 'profile';
+
+            const titles = { 'home': "Fil d'actualité", 'search': "Espace 💡", 'notes': "Mes notes", 'community': "Mes Amis", 'profile': "Mon Profil" };
+            const pageTitleElement = document.getElementById('pageTitle');
+            if (pageTitleElement && titles[targetView]) {
+                pageTitleElement.innerText = titles[targetView];
+            }
+
+            document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+            const target = document.getElementById('view-' + targetView);
+            if (target) target.classList.add('active');
+            
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                btn.classList.remove('active-nav');
+                btn.classList.add('text-gray-400');
+            });
+            
+            const activeBtn = document.getElementById('nav-' + targetView);
+            if (activeBtn) {
+                activeBtn.classList.add('active-nav');
+                activeBtn.classList.remove('text-gray-400');
+            }
+            
+            if (targetView === 'home') loadInitialFeed();
+            if (targetView === 'search') listenZenSpace();
+            if (targetView === 'community') loadFriends();
+        }
+
+        function showToast(m) {
+            const t = document.getElementById('ua-toast');
+            const msg = document.getElementById('toast-message');
+            if (t && msg) {
+                msg.innerText = m;
+                t.classList.add('show');
+                setTimeout(() => t.classList.remove('show'), 3000);
+            }
+        }
+
+        function openSidebar() {
+            document.getElementById('sidebar')?.classList.add('open');
+            document.getElementById('sidebarOverlay')?.classList.add('open');
+        }
+
+        function closeSidebar() {
+            document.getElementById('sidebar')?.classList.remove('open');
+            document.getElementById('sidebarOverlay')?.classList.remove('open');
+        }
+
+        function openImageModal(src) {
+            const modal = document.getElementById('imageModal');
+            const img = document.getElementById('modalImage');
+            if (modal && img) {
+                img.src = src;
+                modal.classList.remove('hidden');
+            }
+        }
+
+        function closeImageModal() {
+            document.getElementById('imageModal')?.classList.add('hidden');
+        }
+
+        function toggleAuthMode() {
+            isLoginMode = !isLoginMode;
+            const title = document.getElementById('auth-title');
+            const submitBtn = document.getElementById('btn-auth-submit');
+            const toggleText = document.getElementById('auth-toggle-text');
+            const toggleBtn = document.getElementById('auth-toggle-btn');
+
+            if (isLoginMode) {
+                if (title) title.innerText = "Connexion Compte UA";
+                if (submitBtn) {
+                    submitBtn.innerText = "SE CONNECTER";
+                    submitBtn.setAttribute('onclick', 'loginUser()');
+                }
+                if (toggleText) toggleText.innerText = "Pas encore de compte ?";
+                if (toggleBtn) toggleBtn.innerText = "S'inscrire";
+            } else {
+                if (title) title.innerText = "Inscription Compte UA";
+                if (submitBtn) {
+                    submitBtn.innerText = "S'ENREGISTRER";
+                    submitBtn.setAttribute('onclick', 'registerUser()');
+                }
+                if (toggleText) toggleText.innerText = "Déjà un compte ?";
+                if (toggleBtn) toggleBtn.innerText = "Se connecter";
+            }
+        }
+
+        function openLogoutModal() {
+            const modal = document.getElementById('logoutModal');
+            const input = document.getElementById('logoutPassInput');
+            if (input) input.value = '';
+            if (modal) modal.classList.remove('hidden');
+        }
+
+        function closeLogoutModal() {
+            document.getElementById('logoutModal')?.classList.add('hidden');
+        }
+
+        async function confirmLogoutWithPassword() {
+            const inputPass = document.getElementById('logoutPassInput')?.value.trim();
+            if (!inputPass) return showToast("⚠️ Veuillez entrer votre mot de passe.");
+
+            const myProfileStr = localStorage.getItem('user_profile');
+            if (!myProfileStr) return executeLogout();
+
+            const myProfile = JSON.parse(myProfileStr);
+
+            try {
+                const doc = await db.collection('users').doc(myProfile.uid || currentUser.uid).get();
+                if (doc.exists && doc.data().password === inputPass) {
+                    showToast("Déconnexion réussie 👋");
+                    closeLogoutModal();
+                    executeLogout();
+                } else {
+                    showToast("❌ Mot de passe incorrect.");
+                }
+            } catch (e) {
+                executeLogout();
+            }
+        }
+
+        function executeLogout() {
+            auth.signOut().then(() => {
+                localStorage.clear();
+                location.reload();
+            }).catch(() => {
+                localStorage.clear();
+                location.reload();
+            });
+        }
+
+        async function loadMoreArticles() {
+            if (isLoadingMore || allArticlesLoaded) return;
+            isLoadingMore = true;
+            
+            let q = db.collection("articles").orderBy("createdAt", "desc").limit(5);
+            if (lastArticleDoc) {
+                q = db.collection("articles").orderBy("createdAt", "desc").startAfter(lastArticleDoc).limit(5);
+            }
+            
+            try {
+                const snap = await q.get();
+                if (snap.empty) {
+                    allArticlesLoaded = true;
+                    document.getElementById('load-more-container')?.classList.add('hidden');
+                    isLoadingMore = false;
+                    return;
+                }
+                
+                lastArticleDoc = snap.docs[snap.docs.length - 1];
+                const feed = document.getElementById('news-feed');
+                
+                snap.forEach(doc => {
+                    const art = doc.data();
+                    const titreArticle = art.title || art.titre || "";
+                    const contenuArticle = art.content || art.contenu || art.texte || "";
+                    const lienImage = art.imageUrl || art.image || null;
+                    const imageHtml = lienImage ? `<img src="${lienImage}" class="w-full h-auto max-h-64 object-cover rounded-xl mb-3 mt-1" onerror="this.style.display='none'">` : '';
+                    
+                    if (feed) {
+                        feed.innerHTML += `
+                            <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 mb-4">
+                                <div class="p-5">
+                                    ${titreArticle ? `<h3 class="font-black text-lg text-gray-800 mb-1">${titreArticle.replace(/</g, '&lt;')}</h3>` : ''}
+                                    ${imageHtml}
+                                    <p class="text-sm text-gray-600 leading-relaxed">${contenuArticle.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>
+                                </div>
+                            </div>`;
+                    }
+                });
+                
+                if (snap.docs.length < 5) allArticlesLoaded = true;
+                document.getElementById('load-more-container')?.classList.toggle('hidden', allArticlesLoaded);
+            } catch (e) { /* Silencieux */ }
+            isLoadingMore = false;
+        }
+
+        function loadInitialFeed() {
+            lastArticleDoc = null;
+            allArticlesLoaded = false;
+            const feed = document.getElementById('news-feed');
+            if (feed) feed.innerHTML = '';
+            loadMoreArticles();
+        }
+
+        // ========== STORIES ET SYSTEME SILENCIEUX INSTANTANÉ ==========
+        let activeStoriesList = [];
+        let currentStoryIndex = 0;
+
+        async function postStory(e) {
+            const file = e.target.files[0];
+            if (!file || !currentUser) return showToast("❌ Connectez-vous d'abord");
+            
+            const isVideo = file.type.startsWith('video/');
+            const isImage = file.type.startsWith('image/');
+            if (!isVideo && !isImage) return;
+
+            try {
+                const userData = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('ua_user_data')) || {};
+                let fileToProcess = file;
+
+                if (isImage) {
+                    fileToProcess = await imageCompression(file, {
+                        maxSizeMB: 0.15,
+                        maxWidthOrHeight: 600,
+                        useWebWorker: true
+                    });
+                } else if (isVideo && file.size > 2.5 * 1024 * 1024) {
+                    return showToast("❌ Vidéo limitée à 2.5 Mo");
+                }
+
+                const reader = new FileReader();
+                reader.readAsDataURL(fileToProcess);
+                reader.onloadend = async () => {
+                    const authorName = `${userData.prenom || ''} ${userData.nom || ''}`.trim() || "Étudiant UA";
+                    const authorAvatar = userData.avatar || "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+
+                    await db.collection("stories").add({
+                        mediaUrl: reader.result,
+                        mediaType: isVideo ? 'video' : 'image',
+                        userName: authorName,
+                        userAvatar: authorAvatar,
+                        userId: currentUser.uid,
+                        views: [],
+                        date: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                };
+            } catch (error) { /* Silencieux */ }
+            e.target.value = '';
+        }
+
+        async function viewMyStories() {
+            if (!currentUser) return showToast("❌ Veuillez vous connecter.");
+            
+            try {
+                const snap = await db.collection("stories")
+                    .where("userId", "==", currentUser.uid)
+                    .orderBy("date", "desc")
+                    .get();
+
+                if (snap.empty) return showToast("ℹ️ Vous n'avez aucune story active.");
+
+                const myStories = [];
+                snap.forEach(doc => myStories.push({ id: doc.id, ...doc.data() }));
+
+                openStoryGroup(myStories);
+            } catch (err) { /* Silencieux */ }
+        }
+
+        function openStoryGroup(storiesGroup) {
+            if (!storiesGroup || !storiesGroup.length) return;
+            activeStoriesList = storiesGroup;
+            currentStoryIndex = 0;
+            showCurrentStory();
+        }
+
+        async function showCurrentStory() {
+            if (currentStoryIndex >= activeStoriesList.length) {
+                closeMediaModal();
+                return;
+            }
+
+            const s = activeStoriesList[currentStoryIndex];
+            const modal = document.getElementById('mediaModal');
+            const content = document.getElementById('mediaContent');
+            
+            if (currentUser && s.userId !== currentUser.uid && s.id) {
+                recordStoryView(s);
+            }
+
+            if (content && modal) {
+                const isMyStory = currentUser && s.userId === currentUser.uid;
+                const viewsCount = (s.views && Array.isArray(s.views)) ? s.views.length : 0;
+
+                const mediaHtml = s.mediaType === 'video' 
+                    ? `<video src="${s.mediaUrl}" controls autoplay onended="nextStory()" class="max-w-full max-h-[75vh] rounded-2xl shadow-2xl"></video>`
+                    : `<img src="${s.mediaUrl}" onclick="nextStory()" class="max-w-full max-h-[75vh] rounded-2xl shadow-2xl cursor-pointer">`;
+                
+                const viewsBtnHtml = isMyStory ? `
+                    <div class="mt-3 flex justify-center">
+                        <button onclick="openStoryViewsModal(${currentStoryIndex})" class="bg-black/70 text-white px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 hover:bg-black transition active:scale-95 border border-white/20">
+                            <i class="fas fa-eye text-green-400"></i> ${viewsCount} vue${viewsCount > 1 ? 's' : ''}
+                        </button>
+                    </div>` : '';
+
+                content.innerHTML = `
+                    <div class="relative flex flex-col items-center max-w-sm mx-auto">
+                        <div class="w-full flex items-center justify-between bg-black/60 text-white px-3 py-2 rounded-t-2xl text-xs font-bold mb-1">
+                            <div class="flex items-center gap-2">
+                                <img src="${s.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-6 h-6 rounded-full object-cover">
+                                <span>${isMyStory ? 'Vous' : s.userName}</span>
+                            </div>
+                            <span class="text-[10px] text-gray-300">${currentStoryIndex + 1}/${activeStoriesList.length}</span>
+                        </div>
+                        ${mediaHtml}
+                        ${viewsBtnHtml}
+                    </div>`;
+                
+                modal.classList.remove('hidden');
+            }
+        }
+
+        async function recordStoryView(storyObj) {
+            try {
+                const userData = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('ua_user_data')) || {};
+                const viewEntry = {
+                    uid: currentUser.uid,
+                    userName: `${userData.prenom || ''} ${userData.nom || ''}`.trim() || "Étudiant",
+                    userAvatar: userData.avatar || "https://cdn-icons-png.flaticon.com/512/149/149071.png"
+                };
+
+                const storyRef = db.collection("stories").doc(storyObj.id);
+                const doc = await storyRef.get();
+                
+                if (doc.exists) {
+                    const viewsArr = doc.data().views || [];
+                    if (!viewsArr.some(v => v.uid === currentUser.uid)) {
+                        await storyRef.update({
+                            views: firebase.firestore.FieldValue.arrayUnion(viewEntry)
+                        });
+                    }
+                }
+            } catch (e) { /* Silencieux */ }
+        }
+
+        function openStoryViewsModal(index) {
+            const s = activeStoriesList[index];
+            if (!s) return;
+
+            const modal = document.getElementById('storyViewsModal');
+            const list = document.getElementById('storyViewsList');
+            const headerCount = document.getElementById('viewsCountHeader');
+
+            const views = s.views || [];
+            if (headerCount) headerCount.innerText = views.length;
+
+            if (list) {
+                if (views.length === 0) {
+                    list.innerHTML = `<p class="text-xs text-gray-500 text-center py-6">Aucune vue pour le moment.</p>`;
+                } else {
+                    list.innerHTML = views.map(v => `
+                        <div class="flex items-center gap-3 py-3">
+                            <img src="${v.userAvatar || 'https://cdn-icons-png.flaticon.com/512/149/149071.png'}" class="w-9 h-9 rounded-full object-cover border">
+                            <div class="flex-1">
+                                <h5 class="text-xs font-bold text-gray-800">${(v.userName || "Étudiant UA").replace(/</g, '&lt;')}</h5>
+                                <span class="text-[9px] text-green-600 font-semibold">a vu votre statut</span>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+            }
+            if (modal) modal.classList.remove('hidden');
+        }
+
+        function closeStoryViewsModal() {
+            document.getElementById('storyViewsModal')?.classList.add('hidden');
+        }
+
+        function nextStory() {
+            currentStoryIndex++;
+            showCurrentStory();
+        }
+
+        function closeMediaModal() {
+            const content = document.getElementById('mediaContent');
+            if (content) content.innerHTML = '';
+            document.getEleme
