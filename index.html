@@ -274,4 +274,11 @@
         <button onclick="switchView('profile')" id="nav-profile" class="nav-btn flex flex-col items-center p-2 text-gray-400"><i class="fas fa-user-circle text-xl"></i><span class="text-[9px] font-bold mt-1">Profil</span></button>
     </nav>
 
-    <div id="imageModal" class="hidden fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4" onclick="
+    <div id="imageModal" class="hidden fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4" onclick="closeImageModal()">
+        <img id="modalImage" src="" class="max-w-full max-h-full object-contain rounded-lg">
+    </div>
+    
+    <div id="mediaModal" class="hidden fixed inset-0 z-[210] bg-black/95 flex items-center justify-center p-4" onclick="closeMediaModal()">
+        <div id="mediaContent" class="media-modal-content"></div>
+        <button onclick="closeMediaModal()" class="absolute top-4 right-4 text-white text-3xl">&times;</button>
+    </div>
