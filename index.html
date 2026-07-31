@@ -205,3 +205,181 @@
             </div>
         </section>
     </main>
+    <!-- Chat Privé -->
+    <div id="chatWindow" class="hidden fixed inset-0 z-[150] bg-white flex flex-col">
+        <header class="ua-green text-white p-4 flex items-center gap-3 shadow-md">
+            <i class="fas fa-arrow-left cursor-pointer text-xl" onclick="closeChat()"></i>
+            <div class="flex-1">
+                <h3 id="chatPartnerName" class="font-bold text-sm">Ami</h3>
+                <p class="text-[10px] opacity-80">En ligne</p>
+            </div>
+        </header>
+        <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50 flex flex-col"></div>
+        
+        <div class="p-3 bg-white border-t flex items-center gap-2">
+            <!-- Bouton Annulation Vocal -->
+            <button id="cancelVoiceBtn" onclick="cancelVoiceRecord()" class="hidden bg-red-100 text-red-600 w-10 h-10 rounded-full flex items-center justify-center transition active:scale-95">
+                <i class="fas fa-trash"></i>
+            </button>
+
+            <input type="text" id="chatInput" placeholder="Écrire un message..." class="input-pro flex-1" onkeypress="if(event.key==='Enter') sendMessage()">
+            
+            <!-- Bouton Note Vocale -->
+            <button id="voiceBtn" onclick="toggleVoiceRecord()" class="bg-gray-200 text-gray-700 w-10 h-10 rounded-full flex items-center justify-center transition active:scale-95">
+                <i class="fas fa-microphone"></i>
+            </button>
+            
+            <button onclick="sendMessage()" class="ua-green text-white w-10 h-10 rounded-full flex items-center justify-center"><i class="fas fa-paper-plane"></i></button>
+        </div>
+    </div>
+
+    <!-- Navigation du bas -->
+    <nav class="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t p-2 flex justify-around shadow-2xl z-50">
+        <button onclick="switchView('home')" id="nav-home" class="nav-btn flex flex-col items-center p-2 active-nav"><i class="fas fa-home text-xl"></i><span class="text-[9px] font-bold mt-1">Accueil</span></button>
+        <button onclick="switchView('search')" id="nav-search" class="nav-btn flex flex-col items-center p-2 text-gray-400"><i class="fas fa-lightbulb text-xl"></i><span class="text-[9px] font-bold mt-1">💡</span></button>
+        <button onclick="switchView('notes')" id="nav-notes" class="nav-btn flex flex-col items-center p-2 text-gray-400"><i class="fas fa-graduation-cap text-xl"></i><span class="text-[9px] font-bold mt-1">Notes</span></button>
+        <button onclick="switchView('community')" id="nav-community" class="nav-btn flex flex-col items-center p-2 text-gray-400"><i class="fas fa-users text-xl"></i><span class="text-[9px] font-bold mt-1">Amis</span></button>
+        <button onclick="switchView('profile')" id="nav-profile" class="nav-btn flex flex-col items-center p-2 text-gray-400"><i class="fas fa-user-circle text-xl"></i><span class="text-[9px] font-bold mt-1">Profil</span></button>
+    </nav>
+
+    <!-- Modals -->
+    <div id="imageModal" class="hidden fixed inset-0 z-[200] bg-black/90 flex items-center justify-center p-4" onclick="closeImageModal()">
+        <img id="modalImage" src="" class="max-w-full max-h-full object-contain rounded-lg">
+    </div>
+    
+    <!-- Visionneuse de Stories WhatsApp -->
+    <div id="storyViewer" class="hidden fixed inset-0 z-[300] bg-black flex flex-col justify-between p-4">
+        <div class="flex gap-1 w-full pt-2" id="storyProgressContainer"></div>
+        
+        <div class="flex justify-between items-center text-white z-10 my-2">
+            <div class="flex items-center gap-3">
+                <img id="storyUserAvatar" src="" class="w-10 h-10 rounded-full border-2 border-green-500 object-cover">
+                <div>
+                    <h4 id="storyUserName" class="font-bold text-sm"></h4>
+                    <p id="storyTime" class="text-[10px] text-gray-300"></p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <button id="deleteStoryBtn" onclick="deleteCurrentStory()" class="hidden text-red-500 hover:text-red-400 text-lg"><i class="fas fa-trash"></i></button>
+                <button onclick="closeStoryViewer()" class="text-white text-2xl font-bold">&times;</button>
+            </div>
+        </div>
+
+        <div class="flex-1 relative flex items-center justify-center overflow-hidden my-auto" id="storyContentArea">
+            <div class="absolute left-0 top-0 w-1/2 h-full z-20" onclick="prevStory()"></div>
+            <div class="absolute right-0 top-0 w-1/2 h-full z-20" onclick="nextStory()"></div>
+            <div id="storyMediaWrapper" class="w-full h-full flex items-center justify-center"></div>
+        </div>
+    </div>
+
+    <script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyAlxkxSSmmt6hRqqT6qvwHuXHF2q5n-Qxk",
+        authDomain: "faso-opportunites.firebaseapp.com",
+        databaseURL: "https://faso-opportunites-default-rtdb.firebaseio.com",
+        projectId: "faso-opportunites",
+        storageBucket: "faso-opportunites.firebasestorage.app",
+        messagingSenderId: "548784260893",
+        appId: "1:548784260893:web:11894c7a8160dd76e7c3f4",
+        measurementId: "G-9J6PQBBFF8"
+    };
+
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    let currentUser = null;
+    let activeChatId = null;
+    let unsubscribeChat = null;
+    let lastArticleDoc = null;
+    let isLoadingMore = false;
+    let allArticlesLoaded = false;
+    let currentVideoUrl = "";
+    let allFetchedUsers = [];
+
+    let groupedStories = {};
+    let currentStoryUserIds = [];
+    let currentUserIndex = 0;
+    let currentStoryIndex = 0;
+    let storyTimer = null;
+
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+    let isVoiceCancelled = false;
+
+    const EXCLUDED_NAMES = ["Étudiant UA", "@2003#! PDG Boss", "@2003#! @2003#!", "Anonyme", "Test"];
+
+    function switchView(v) {
+        let targetView = v;
+        if (v === 'home' || v === 'accueil') targetView = 'home';
+        if (v === 'search' || v === 'zen' || v === '💡') targetView = 'search';
+        if (v === 'notes') targetView = 'notes';
+        if (v === 'community' || v === 'amis') targetView = 'community';
+        if (v === 'profile' || v === 'profil') targetView = 'profile';
+
+        const titles = { 'home': "Fil d'actualité", 'search': "Espace 💡", 'notes': "Mes notes", 'community': "Mes Amis", 'profile': "Mon Profil" };
+        const pageTitleElement = document.getElementById('pageTitle');
+        if (pageTitleElement && titles[targetView]) pageTitleElement.innerText = titles[targetView];
+
+        document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+        const target = document.getElementById('view-' + targetView);
+        if (target) target.classList.add('active');
+        
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.remove('active-nav');
+            btn.classList.add('text-gray-400');
+        });
+        
+        const activeBtn = document.getElementById('nav-' + targetView);
+        if (activeBtn) {
+            activeBtn.classList.add('active-nav');
+            activeBtn.classList.remove('text-gray-400');
+        }
+        
+        if (targetView === 'home') loadInitialFeed();
+        if (targetView === 'search') listenZenSpace();
+    }
+
+    function showToast(m) {
+        const t = document.getElementById('ua-toast');
+        const msg = document.getElementById('toast-message');
+        if (t && msg) {
+            msg.innerText = m;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+    }
+
+    function openSidebar() {
+        document.getElementById('sidebar')?.classList.add('open');
+        document.getElementById('sidebarOverlay')?.classList.add('open');
+    }
+
+    function closeSidebar() {
+        document.getElementById('sidebar')?.classList.remove('open');
+        document.getElementById('sidebarOverlay')?.classList.remove('open');
+    }
+
+    function openImageModal(src) {
+        const modal = document.getElementById('imageModal');
+        const img = document.getElementById('modalImage');
+        if (modal && img) {
+            img.src = src;
+            modal.classList.remove('hidden');
+        }
+    }
+
+    function closeImageModal() {
+        document.getElementById('imageModal')?.classList.add('hidden');
+    }
+
+    function handleLogout() {
+        if (confirm("Voulez-vous vraiment vous déconnecter ?")) {
+            auth.signOut().then(() => { localStorage.clear(); location.reload(); })
+            .catch(() => { localStorage.clear(); location.reload(); });
+        }
+    }
+        
