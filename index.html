@@ -850,4 +850,117 @@
         renderFriends(filtered);
     }
 
-    async function register
+    async function registerUser() {
+        const nom = document.getElementById('reg-nom').value.trim();
+        const prenom = document.getElementById('reg-prenom').value.trim();
+        const filiere = document.getElementById('reg-filiere').value.trim();
+        if (!nom || !prenom) return showToast("⚠️ Nom et Prénom requis");
+        
+        const savedData = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+        const userData = { nom, prenom, filiere, avatar: savedData.avatar || "", date: firebase.firestore.FieldValue.serverTimestamp() };
+        
+        localStorage.setItem('ua_user_data', JSON.stringify(userData));
+        localStorage.setItem('ua_registered', 'true');
+        
+        if (currentUser) {
+            await db.collection("users").doc(currentUser.uid).set(userData, { merge: true });
+        }
+        updateProfileUI(userData);
+        showToast("✅ Profil enregistré !");
+        switchView('home');
+    }
+
+    async function previewImage(e, instant = false) {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+            const compressedFile = await imageCompression(file, { maxSizeMB: 0.1, maxWidthOrHeight: 400, useWebWorker: true });
+            const reader = new FileReader();
+            reader.onload = async (ev) => {
+                const url = ev.target.result;
+                document.getElementById('temp-avatar').src = url;
+                document.getElementById('user-img').src = url;
+                
+                let data = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+                data.avatar = url;
+                localStorage.setItem('ua_user_data', JSON.stringify(data));
+                if (instant && currentUser) {
+                    await db.collection("users").doc(currentUser.uid).set(data, { merge: true });
+                    showToast("📸 Photo mise à jour !");
+                }
+            };
+            reader.readAsDataURL(compressedFile);
+        } catch (error) { }
+    }
+
+    function updateProfileUI(data) {
+        document.getElementById('register-ui').classList.add('hidden');
+        document.getElementById('profile-ui').classList.remove('hidden');
+        document.getElementById('user-full-name').innerText = `${data.prenom || ''} ${data.nom || ''}`;
+        document.getElementById('user-sub').innerText = data.filiere || 'Étudiant';
+        if (data.avatar) document.getElementById('user-img').src = data.avatar;
+    }
+
+    async function searchNotes() {
+        const ine = document.getElementById('matSearch').value.trim().toUpperCase();
+        const res = document.getElementById('resultArea');
+        if (!ine) return showToast("Entrez votre INE");
+        res.innerHTML = '<div class="text-center text-gray-500">🔍 Recherche...</div>';
+        try {
+            const snap = await db.collection("notes").where("ine", "==", ine).get();
+            if (snap.empty) {
+                res.innerHTML = `<div class="bg-blue-50 p-6 rounded-2xl text-center"><p class="font-bold text-blue-700">📭 Aucun résultat pour l'INE : ${ine}</p></div>`;
+                return;
+            }
+            let html = `<div class="space-y-4">`;
+            snap.forEach(doc => {
+                const n = doc.data();
+                html += `<div class="bg-white rounded-2xl border p-4 text-left shadow-sm">
+                            <div class="font-bold text-green-800">📚 ${(n.matiere || "Sans nom").replace(/</g, '&lt;')}</div>
+                            <div class="text-2xl font-black text-green-700">${n.note || "?"}/20</div>
+                            ${n.commentaire ? `<div class="text-sm italic text-gray-500 mt-1">“${n.commentaire.replace(/</g, '&lt;')}”</div>` : ''}
+                        </div>`;
+            });
+            html += `</div>`;
+            res.innerHTML = html;
+        } catch (error) {
+            res.innerHTML = `<div class="text-red-500">❌ Consultation indisponible actuellement</div>`;
+        }
+    }
+
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; });
+    
+    function installApp() {
+        if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; } 
+        else { showToast("📱 Menu de votre navigateur -> Ajouter à l'écran d'accueil"); }
+    }
+
+    auth.onAuthStateChanged(async (user) => {
+        if (!user) {
+            await auth.signInAnonymously();
+        } else {
+            currentUser = user;
+            const saved = localStorage.getItem('ua_user_data');
+            if (saved) updateProfileUI(JSON.parse(saved));
+            chargerDonneesGlobales();
+            listenZenSpace(); 
+        }
+    });
+
+    window.onload = () => {
+        if (!localStorage.getItem('ua_registered')) switchView('profile');
+        else switchView('home');
+    };
+
+    Object.assign(window, { 
+        switchView, openSidebar, closeSidebar, openImageModal, closeImageModal, 
+        handleLogout, installApp, startChat, sendMessage, closeChat, registerUser, 
+        previewImage, searchNotes, postStory, downloadCurrentVideo, listenZenSpace, 
+        filterFriendsList, openStoryViewer, nextStory, prevStory, closeStoryViewer, 
+        deleteCurrentStory, toggleVoiceRecord, cancelVoiceRecord, deleteMessage
+    });
+</script>
+</body>
+</html>
+
