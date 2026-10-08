@@ -281,4 +281,432 @@
         docs:      { src: 'youtube', q: 'documentaire histoire science français' },
         films:     { src: 'archive', q: 'language:(french OR francais OR fre) AND mediatype:movies AND collection:feature_films' },
         actu:      { src: 'youtube', q: 'actualité afrique francophone 2024' },
-      
+          musique:   { src: 'youtube', q: 'musique africaine francophone clip officiel' }
+    };
+
+    const EXCLUDED_NAMES = ["Étudiant UA", "@2003#! PDG Boss", "@2003#! @2003#!", "Anonyme", "Test"];
+
+    function switchView(v) {
+        let targetView = v;
+        if (v === 'home' || v === 'accueil') targetView = 'home';
+        if (v === 'box' || v === 'search' || v === '💡') targetView = 'box';
+        if (v === 'notes') targetView = 'notes';
+        if (v === 'community' || v === 'amis') targetView = 'community';
+        if (v === 'profile' || v === 'profil') targetView = 'profile';
+
+        const titles = { 'home': "Fil d'actualité", 'box': "UA Box", 'notes': "Mes notes", 'community': "Mes Amis", 'profile': "Mon Profil" };
+        const pageTitleElement = document.getElementById('pageTitle');
+        if (pageTitleElement && titles[targetView]) pageTitleElement.innerText = titles[targetView];
+
+        document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+        const target = document.getElementById('view-' + targetView);
+        if (target) target.classList.add('active');
+        
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.remove('active-nav');
+            btn.classList.add('text-gray-400');
+        });
+        
+        const activeBtn = document.getElementById('nav-' + targetView);
+        if (activeBtn) {
+            activeBtn.classList.add('active-nav');
+            activeBtn.classList.remove('text-gray-400');
+        }
+        
+        if (targetView === 'home') loadInitialFeed();
+        if (targetView === 'box' && boxVideos.length === 0) loadBox(true);
+    }
+
+    function showToast(m) {
+        const t = document.getElementById('ua-toast');
+        const msg = document.getElementById('toast-message');
+        if (t && msg) {
+            msg.innerText = m;
+            t.classList.add('show');
+            setTimeout(() => t.classList.remove('show'), 3000);
+        }
+    }
+
+    function openSidebar() {
+        document.getElementById('sidebar')?.classList.add('open');
+        document.getElementById('sidebarOverlay')?.classList.add('open');
+    }
+
+    function closeSidebar() {
+        document.getElementById('sidebar')?.classList.remove('open');
+        document.getElementById('sidebarOverlay')?.classList.remove('open');
+    }
+
+    function openImageModal(src) {
+        const modal = document.getElementById('imageModal');
+        const img = document.getElementById('modalImage');
+        if (modal && img) {
+            img.src = src;
+            modal.classList.remove('hidden');
+        }
+    }
+
+    function closeImageModal() {
+        document.getElementById('imageModal')?.classList.add('hidden');
+    }
+
+    function handleLogout() {
+        if (confirm("Voulez-vous vraiment vous déconnecter ?")) {
+            auth.signOut().then(() => { localStorage.clear(); location.reload(); })
+            .catch(() => { localStorage.clear(); location.reload(); });
+        }
+    }
+
+    async function loadMoreArticles() {
+        if (isLoadingMore || allArticlesLoaded) return;
+        isLoadingMore = true;
+        
+        let q = db.collection("articles").orderBy("createdAt", "desc").limit(5);
+        if (lastArticleDoc) q = db.collection("articles").orderBy("createdAt", "desc").startAfter(lastArticleDoc).limit(5);
+        
+        try {
+            const snap = await q.get();
+            if (snap.empty) {
+                allArticlesLoaded = true;
+                document.getElementById('load-more-container')?.classList.add('hidden');
+                isLoadingMore = false;
+                return;
+            }
+            
+            lastArticleDoc = snap.docs[snap.docs.length - 1];
+            const feed = document.getElementById('news-feed');
+            
+            snap.forEach(doc => {
+                const art = doc.data();
+                const titreArticle = art.title || art.titre || "";
+                const contenuArticle = art.content || art.contenu || art.texte || "";
+                const lienImage = art.imageUrl || art.image || null;
+                const imageHtml = lienImage ? `<img src="${lienImage}" class="w-full h-auto max-h-64 object-cover rounded-xl mb-3 mt-1" onerror="this.style.display='none'">` : '';
+                
+                feed.innerHTML += `
+                    <div class="bg-white rounded-3xl overflow-hidden shadow-sm border border-gray-100 mb-4">
+                        <div class="p-5">
+                            ${titreArticle ? `<h3 class="font-black text-lg text-gray-800 mb-1">${titreArticle.replace(/</g, '&lt;')}</h3>` : ''}
+                            ${imageHtml}
+                            <p class="text-sm text-gray-600 leading-relaxed">${contenuArticle.replace(/\n/g, '<br>').replace(/</g, '&lt;')}</p>
+                        </div>
+                    </div>`;
+            });
+            
+            if (snap.docs.length < 5) allArticlesLoaded = true;
+            document.getElementById('load-more-container')?.classList.toggle('hidden', allArticlesLoaded);
+        } catch (e) { }
+        isLoadingMore = false;
+    }
+
+    function loadInitialFeed() {
+        lastArticleDoc = null;
+        allArticlesLoaded = false;
+        const feed = document.getElementById('news-feed');
+        if (feed) feed.innerHTML = '';
+        loadMoreArticles();
+    }
+
+    // ========== FONCTIONS MOTEUR UA BOX ==========
+    async function loadBox(reset = false) {
+        if (boxLoading) return;
+        if (reset) { boxVideos = []; boxPage = 1; boxHasMore = true; }
+        if (!boxHasMore) return;
+        boxLoading = true;
+        const grid = document.getElementById('boxGrid');
+        const loader = document.getElementById('boxLoader');
+        const empty = document.getElementById('boxEmpty');
+        const moreBtn = document.getElementById('boxMoreBtn');
+        if (reset && grid) grid.innerHTML = '';
+        if (loader) loader.classList.remove('hidden');
+        if (empty) empty.classList.add('hidden');
+        if (moreBtn) moreBtn.classList.add('hidden');
+        
+        try {
+            let items = [];
+            if (boxQuery) {
+                items = await searchYouTube(boxQuery);
+            } else {
+                const cfg = BOX_CONFIG[boxCategory] || BOX_CONFIG['afrique'];
+                if (cfg.src === 'archive') items = await fetchArchive(cfg.q, boxPage);
+                else items = await searchYouTube(cfg.q);
+            }
+            if (!items || items.length === 0) {
+                boxHasMore = false;
+                if (boxVideos.length === 0 && empty) empty.classList.remove('hidden');
+            } else {
+                boxVideos = boxVideos.concat(items);
+                renderBox();
+                boxHasMore = items.length >= 15;
+                if (boxHasMore && moreBtn) moreBtn.classList.remove('hidden');
+            }
+        } catch (e) {
+            if (boxVideos.length === 0 && empty) empty.classList.remove('hidden');
+        }
+        if (loader) loader.classList.add('hidden');
+        boxLoading = false;
+    }
+
+    async function fetchArchive(query, page) {
+        const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)}&fl[]=identifier&fl[]=title&fl[]=year&fl[]=creator&sort[]=downloads+desc&rows=15&page=${page}&output=json`;
+        const res = await fetch(url);
+        const data = await res.json();
+        const docs = data?.response?.docs || [];
+        return docs.map(d => ({
+            id: 'a_' + d.identifier,
+            title: (Array.isArray(d.title) ? d.title[0] : d.title) || 'Sans titre',
+            author: (Array.isArray(d.creator) ? d.creator[0] : d.creator) || '',
+            year: d.year || '',
+            thumb: `https://archive.org/services/img/${d.identifier}`,
+            type: 'archive',
+            embed: `https://archive.org/embed/${d.identifier}`,
+            source: `https://archive.org/details/${d.identifier}`
+        }));
+    }
+
+    async function searchYouTube(query) {
+        for (const inst of PIPED_INSTANCES) {
+            try {
+                const url = `${inst}/search?q=${encodeURIComponent(query)}&filter=videos`;
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 6000);
+                const res = await fetch(url, { signal: controller.signal });
+                clearTimeout(timeout);
+                if (!res.ok) continue;
+                const data = await res.json();
+                const items = (data?.items || []).filter(i => i.type === 'stream' && i.url);
+                if (items.length === 0) continue;
+                return items.slice(0, 15).map(v => {
+                    const vid = (v.url || '').split('v=')[1]?.split('&')[0] || '';
+                    return {
+                        id: 'y_' + vid,
+                        title: v.title || 'Sans titre',
+                        author: v.uploaderName || '',
+                        year: v.uploadedDate || '',
+                        thumb: v.thumbnail || `https://i.ytimg.com/vi/${vid}/mqdefault.jpg`,
+                        type: 'youtube',
+                        videoId: vid,
+                        duration: v.duration || 0
+                    };
+                }).filter(v => v.videoId);
+            } catch (e) { continue; }
+        }
+        return [];
+    }
+
+    function renderBox() {
+        const grid = document.getElementById('boxGrid');
+        if (!grid) return;
+        grid.innerHTML = boxVideos.map(v => {
+            const badge = v.type === 'youtube' && v.duration
+                ? `<span class="absolute bottom-2 right-2 bg-black/80 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">${fmtDuration(v.duration)}</span>`
+                : '';
+            const isYT = v.type === 'youtube';
+            return `
+            <div onclick="openVideo('${v.id}')" class="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 cursor-pointer active:scale-95 transition">
+                <div class="relative bg-gray-900 ${isYT ? 'aspect-video' : 'aspect-[3/4]'}">
+                    <img src="${v.thumb}" class="w-full h-full object-cover" loading="lazy" onerror="this.src='https://via.placeholder.com/300x200/008751/ffffff?text=UA+Box'">
+                    <div class="absolute inset-0 flex items-center justify-center bg-black/20">
+                        <i class="fas fa-play-circle text-white text-4xl drop-shadow-lg"></i>
+                    </div>
+                    ${badge}
+                </div>
+                <div class="p-2.5">
+                    <h4 class="font-bold text-[11px] text-gray-800 line-clamp-2 leading-tight">${(v.title||'').replace(/</g,'&lt;')}</h4>
+                    ${v.author ? `<p class="text-[9px] text-gray-500 mt-1 truncate">${v.author.replace(/</g,'&lt;')}</p>` : ''}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    function fmtDuration(s) {
+        if (!s) return '';
+        const h = Math.floor(s / 3600);
+        const m = Math.floor((s % 3600) / 60);
+        const sec = s % 60;
+        if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+        return `${m}:${String(sec).padStart(2,'0')}`;
+    }
+
+    function setBoxCategory(cat) {
+        hideOffline();
+        boxCategory = cat;
+        boxQuery = '';
+        const searchInput = document.getElementById('boxSearch');
+        if (searchInput) searchInput.value = '';
+        document.querySelectorAll('.box-cat-btn').forEach(b => b.classList.toggle('active-cat', b.dataset.cat === cat));
+        loadBox(true);
+    }
+
+    function doBoxSearch() {
+        const q = document.getElementById('boxSearch')?.value.trim();
+        if (!q) return loadBox(true);
+        hideOffline();
+        boxQuery = q;
+        document.querySelectorAll('.box-cat-btn').forEach(b => b.classList.remove('active-cat'));
+        loadBox(true);
+    }
+
+    function loadMoreBox() { boxPage++; loadBox(false); }
+
+    function openVideo(id) {
+        const v = boxVideos.find(x => x.id === id);
+        if (!v) return;
+        document.getElementById('videoTitle').innerText = v.title;
+        const container = document.getElementById('videoContainer');
+        const dlBtn = document.getElementById('videoDownloadBtn');
+        if (v.type === 'youtube') {
+            container.innerHTML = `<iframe src="https://www.youtube.com/embed/${v.videoId}?autoplay=1&rel=0" class="w-full h-full max-w-4xl aspect-video rounded-lg" frameborder="0" allow="autoplay; encrypted-media; fullscreen" allowfullscreen></iframe>`;
+            dlBtn.classList.remove('hidden');
+            dlBtn.classList.add('flex');
+            dlBtn.onclick = () => downloadYouTube(v);
+        } else {
+            container.innerHTML = `<iframe src="${v.embed}" class="w-full h-full max-w-4xl aspect-video rounded-lg" frameborder="0" allowfullscreen></iframe>`;
+            dlBtn.classList.remove('hidden');
+            dlBtn.classList.add('flex');
+            dlBtn.onclick = () => downloadArchive(v);
+        }
+        document.getElementById('videoModal').classList.remove('hidden');
+    }
+
+    function closeVideoModal() {
+        document.getElementById('videoModal').classList.add('hidden');
+        document.getElementById('videoContainer').innerHTML = '';
+    }
+
+    async function downloadYouTube(v) {
+        showToast("⏳ Préparation du téléchargement...");
+        for (const inst of PIPED_INSTANCES) {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 8000);
+                const res = await fetch(`${inst}/streams/${v.videoId}`, { signal: controller.signal });
+                clearTimeout(timeout);
+                if (!res.ok) continue;
+                const data = await res.json();
+                const streams = (data?.videoStreams || [])
+                    .filter(s => s.mimeType && s.mimeType.includes('mp4') && s.videoOnly !== true)
+                    .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+                if (streams.length === 0) continue;
+                const best = streams.find(s => s.quality === '720p') || streams[0];
+                const a = document.createElement('a');
+                a.href = best.url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.download = (v.title || 'video') + '.mp4';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                showToast("✅ Téléchargement lancé !");
+                saveToOffline(v, best.url);
+                return;
+            } catch (e) { continue; }
+        }
+        showToast("⚠️ Téléchargement indisponible. Essayez une autre vidéo.");
+    }
+
+    function downloadArchive(v) {
+        window.open(v.source.replace('/details/', '/download/'), '_blank');
+        showToast("✅ Téléchargement lancé !");
+        saveToOffline(v, v.source.replace('/details/', '/download/'));
+    }
+
+    function saveToOffline(v, url) {
+        try {
+            let off = JSON.parse(localStorage.getItem('ua_offline') || '[]');
+            off = off.filter(o => o.id !== v.id);
+            off.unshift({ id: v.id, title: v.title, thumb: v.thumb, type: v.type, videoId: v.videoId, url: url, ts: Date.now() });
+            off = off.slice(0, 100);
+            localStorage.setItem('ua_offline', JSON.stringify(off));
+        } catch (e) {}
+    }
+
+    function renderOfflineList() {
+        const el = document.getElementById('offlineList');
+        if (!el) return;
+        const off = JSON.parse(localStorage.getItem('ua_offline') || '[]');
+        if (off.length === 0) {
+            el.innerHTML = `<p class="text-xs text-gray-400 text-center py-6">Aucun téléchargement enregistré.</p>`;
+            return;
+        }
+        el.innerHTML = off.map(o => `
+            <div class="flex items-center gap-3 bg-white p-3 rounded-2xl border border-gray-100">
+                <img src="${o.thumb}" class="w-16 h-12 object-cover rounded-lg">
+                <div class="flex-1 min-w-0">
+                    <h4 class="font-bold text-[11px] text-gray-800 line-clamp-2 leading-tight">${(o.title||'').replace(/</g,'&lt;')}</h4>
+                    <p class="text-[9px] text-gray-400 mt-0.5">${new Date(o.ts).toLocaleDateString('fr-FR')}</p>
+                </div>
+                <button onclick="playOffline('${o.id}')" class="ua-green text-white w-8 h-8 rounded-full flex items-center justify-center text-xs"><i class="fas fa-play"></i></button>
+                <button onclick="removeOffline('${o.id}')" class="text-red-400 w-8 h-8 flex items-center justify-center text-xs"><i class="fas fa-trash"></i></button>
+            </div>
+        `).join('');
+    }
+
+    function playOffline(id) {
+        const off = JSON.parse(localStorage.getItem('ua_offline') || '[]');
+        const o = off.find(x => x.id === id);
+        if (!o) return;
+        if (o.type === 'youtube' && o.videoId) {
+            window.open(`https://www.youtube.com/watch?v=${o.videoId}`, '_blank');
+        } else if (o.url) {
+            window.open(o.url, '_blank');
+        }
+    }
+
+    function removeOffline(id) {
+        let off = JSON.parse(localStorage.getItem('ua_offline') || '[]');
+        off = off.filter(o => o.id !== id);
+        localStorage.setItem('ua_offline', JSON.stringify(off));
+        renderOfflineList();
+    }
+
+    function showOffline() {
+        document.getElementById('boxCategories')?.classList.add('hidden');
+        document.getElementById('boxGrid')?.classList.add('hidden');
+        document.getElementById('boxLoader')?.classList.add('hidden');
+        document.getElementById('boxMoreBtn')?.classList.add('hidden');
+        document.getElementById('boxEmpty')?.classList.add('hidden');
+        document.getElementById('offlinePanel')?.classList.remove('hidden');
+        renderOfflineList();
+    }
+
+    function hideOffline() {
+        document.getElementById('offlinePanel')?.classList.add('hidden');
+        document.getElementById('boxCategories')?.classList.remove('hidden');
+        document.getElementById('boxGrid')?.classList.remove('hidden');
+    }
+
+    // ========== PROFIL & INSCRIPTION ==========
+    async function registerUser() {
+        const nom = document.getElementById('reg-nom').value.trim();
+        const prenom = document.getElementById('reg-prenom').value.trim();
+        const filiere = document.getElementById('reg-filiere').value.trim();
+        const tel = document.getElementById('reg-tel').value.trim().replace(/\s/g, '');
+        const snap = document.getElementById('reg-snap').value.trim().replace('@', '');
+        const insta = document.getElementById('reg-insta').value.trim().replace('@', '');
+
+        if (!nom) return showToast("⚠️ Nom obligatoire");
+        if (!prenom) return showToast("⚠️ Prénom obligatoire");
+        if (!filiere) return showToast("⚠️ Filière obligatoire");
+        if (!tel) return showToast("⚠️ Numéro WhatsApp obligatoire");
+        if (tel.replace(/\D/g, '').length < 8) return showToast("⚠️ Numéro WhatsApp invalide");
+
+        const savedData = JSON.parse(localStorage.getItem('ua_user_data')) || {};
+        const userData = {
+            nom, prenom, filiere, telephone: tel,
+            snapchat: snap || "", instagram: insta || "",
+            avatar: savedData.avatar || "",
+            date: savedData.date || firebase.firestore.FieldValue.serverTimestamp()
+        };
+
+        localStorage.setItem('ua_user_data', JSON.stringify(userData));
+        localStorage.setItem('ua_registered', 'true');
+
+        if (currentUser) {
+            await db.collection("users").doc(currentUser.uid).set(userData, { merge: true });
+        }
+        updateProfileUI(userData);
+        showToast(modeModification ? "✅ Profil mis à jour !" : "✅ Profil enregistré !");
+        modeModification = false;
+        document.getElementById('btnAnnulerModif').classList.add('hidden');
+        document    
