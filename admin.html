@@ -299,4 +299,389 @@
             }
         }
 
-        //
+                // ========== 3. SÉLECTION + COMPRESSION IMAGE ==========
+        async function handleFileSelect(event) {
+            const file = event.target.files[0];
+            const nameDisplay = document.getElementById('file-name-display');
+            const previewImg = document.getElementById('preview-img');
+            const compInfo = document.getElementById('compression-info');
+            
+            if (!file) {
+                selectedFile = null; compressedBase64 = null;
+                if (nameDisplay) { nameDisplay.innerText = "Aucun fichier sélectionné"; nameDisplay.className = "text-xs text-gray-400 italic truncate"; }
+                if (previewImg) previewImg.classList.add('hidden');
+                if (compInfo) compInfo.classList.add('hidden');
+                return;
+            }
+
+            if (!file.type.startsWith('image/')) {
+                alert("⚠️ Veuillez utiliser uniquement des images (.jpg, .png, .webp).");
+                event.target.value = "";
+                selectedFile = null;
+                return;
+            }
+
+            if (nameDisplay) { nameDisplay.innerText = `⏳ Compression en cours : ${file.name}`; nameDisplay.className = "text-xs text-blue-600 font-bold truncate"; }
+            const originalSize = (file.size / 1024).toFixed(0);
+
+            try {
+                let compressed = await imageCompression(file, { maxSizeMB: 0.5, maxWidthOrHeight: 1200, useWebWorker: true, initialQuality: 0.85 });
+                let base64 = await fileToBase64(compressed);
+                let base64Size = base64.length;
+
+                if (base64Size > MAX_BASE64_SIZE) {
+                    compressed = await imageCompression(compressed, { maxSizeMB: 0.3, maxWidthOrHeight: 900, useWebWorker: true, initialQuality: 0.75 });
+                    base64 = await fileToBase64(compressed);
+                    base64Size = base64.length;
+                }
+
+                if (base64Size > MAX_BASE64_SIZE) {
+                    compressed = await imageCompression(compressed, { maxSizeMB: 0.2, maxWidthOrHeight: 800, useWebWorker: true, initialQuality: 0.65 });
+                    base64 = await fileToBase64(compressed);
+                    base64Size = base64.length;
+                }
+
+                if (base64Size > MAX_BASE64_SIZE) {
+                    alert(`❌ Image trop lourde (${(base64Size/1024).toFixed(0)} Ko). Max : 700 Ko.`);
+                    event.target.value = ""; selectedFile = null; compressedBase64 = null;
+                    if (previewImg) previewImg.classList.add('hidden');
+                    if (nameDisplay) { nameDisplay.innerText = "Aucun fichier sélectionné"; nameDisplay.className = "text-xs text-gray-400 italic truncate"; }
+                    return;
+                }
+
+                selectedFile = compressed;
+                compressedBase64 = base64;
+
+                if (previewImg) { previewImg.src = base64; previewImg.classList.remove('hidden'); }
+
+                const finalSize = (base64Size / 1024).toFixed(0);
+                const ratio = ((1 - base64Size / (file.size * 1.33)) * 100).toFixed(0);
+                
+                if (nameDisplay) { nameDisplay.innerText = `✅ ${file.name} — ${finalSize} Ko`; nameDisplay.className = "text-xs text-green-600 font-bold truncate"; }
+                if (compInfo) { compInfo.innerText = `📉 ${originalSize} Ko → ${finalSize} Ko (${ratio}%)`; compInfo.classList.remove('hidden'); }
+
+            } catch (error) {
+                alert("❌ Erreur de compression : " + error.message);
+                selectedFile = null; compressedBase64 = null;
+                if (previewImg) previewImg.classList.add('hidden');
+                if (nameDisplay) { nameDisplay.innerText = "Aucun fichier sélectionné"; nameDisplay.className = "text-xs text-gray-400 italic truncate"; }
+            }
+        }
+
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error("Erreur lecture"));
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // ========== 4. UPLOAD ARTICLE ==========
+        async function uploadArticle() {
+            const title = document.getElementById('art-title').value.trim();
+            const content = document.getElementById('art-content').value.trim();
+            const btn = document.getElementById('btn-publish');
+            
+            if (!content) { alert("⚠️ Contenu vide !"); return; }
+
+            const originalBtnContent = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `<span class="loading-spinner"></span> Envoi en cours...`;
+
+            try {
+                if (compressedBase64) await publierArticleData(title, content, compressedBase64);
+                else await publierArticleData(title, content, null);
+            } catch (error) {
+                alert("❌ Échec : " + error.message);
+                btn.disabled = false;
+                btn.innerHTML = originalBtnContent;
+            }
+        }
+
+        async function publierArticleData(title, content, mediaUrl) {
+            const docContent = {
+                title, content,
+                imageUrl: mediaUrl || null,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+            const estimatedSize = JSON.stringify(docContent).length;
+            if (estimatedSize > 1000000) throw new Error(`Document trop lourd (${(estimatedSize/1024).toFixed(0)} Ko)`);
+
+            await db.collection("articles").add(docContent);
+            alert("✅ Article mis en ligne !");
+            resetForm();
+            loadAdminArticles();
+        }
+
+        function resetForm() {
+            document.getElementById('art-title').value = "";
+            document.getElementById('art-content').value = "";
+            document.getElementById('art-file').value = "";
+            const nameDisplay = document.getElementById('file-name-display');
+            if (nameDisplay) { nameDisplay.innerText = "Aucun fichier sélectionné"; nameDisplay.className = "text-xs text-gray-400 italic truncate"; }
+            const previewImg = document.getElementById('preview-img');
+            if (previewImg) previewImg.classList.add('hidden');
+            const compInfo = document.getElementById('compression-info');
+            if (compInfo) compInfo.classList.add('hidden');
+            updatePreview();
+            selectedFile = null; compressedBase64 = null;
+            const btn = document.getElementById('btn-publish');
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fas fa-paper-plane"></i> Mettre en ligne l'article`;
+        }
+
+        // ========== 5. GESTION ARTICLES ==========
+        async function loadAdminArticles() {
+            const listArea = document.getElementById('admin-articles-list');
+            if (!listArea) return;
+            listArea.innerHTML = `<div class="text-center py-2 text-xs text-gray-500"><i class="fas fa-spinner animate-spin text-green-600"></i> Chargement...</div>`;
+            
+            try {
+                const snapshot = await db.collection("articles").orderBy("createdAt", "desc").get();
+                if (snapshot.empty) {
+                    listArea.innerHTML = `<p class="text-center text-xs text-gray-400 py-2">Aucun article.</p>`;
+                    return;
+                }
+                listArea.innerHTML = "";
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    const displayTitle = data.title || "Sans titre";
+                    const displayContent = data.content || data.contenu || "";
+                    const hasImage = data.imageUrl ? "📷" : "";
+                    listArea.innerHTML += `
+                        <div id="art-card-${doc.id}" class="bg-gray-50 p-2 rounded-xl flex justify-between items-center gap-3 text-xs border border-gray-200">
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800 truncate">${hasImage} ${displayTitle}</h4>
+                                <p class="text-[10px] text-gray-400 truncate">${displayContent}</p>
+                            </div>
+                            <button onclick="deleteArticle('${doc.id}')" class="text-red-500 hover:text-red-700 p-2 bg-red-50 rounded-lg transition shrink-0">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </div>`;
+                });
+            } catch (error) {
+                listArea.innerHTML = `<p class="text-center text-xs text-red-500 py-2">Erreur : ${error.message}</p>`;
+            }
+        }
+
+        async function deleteArticle(docId) {
+            if (!confirm("⚠️ Supprimer cet article ?")) return;
+            try {
+                await db.collection("articles").doc(docId).delete();
+                const element = document.getElementById(`art-card-${docId}`);
+                if (element) element.remove();
+                alert("✅ Supprimé !");
+            } catch (error) { alert("❌ " + error.message); }
+        }
+
+        // ========== 🔔 6. NOTIFICATIONS ==========
+        function selectNotifType(type) {
+            selectedNotifType = type;
+            document.querySelectorAll('.notif-type-btn').forEach(btn => {
+                btn.classList.remove('selected-info', 'selected-event', 'selected-urgent');
+            });
+            const target = document.querySelector(`.notif-type-btn[data-type="${type}"]`);
+            if (target) target.classList.add(`selected-${type}`);
+        }
+
+        async function sendNotification() {
+            const title = document.getElementById('notif-title').value.trim();
+            const message = document.getElementById('notif-message').value.trim();
+            
+            if (!title) return alert("⚠️ Titre obligatoire");
+            if (!message) return alert("⚠️ Message obligatoire");
+            
+            if (!confirm(`Envoyer cette notification (${selectedNotifType}) à TOUS les étudiants ?`)) return;
+            
+            try {
+                await db.collection('notifications').add({
+                    title: title,
+                    message: message,
+                    type: selectedNotifType,
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                alert("✅ Notification envoyée !");
+                document.getElementById('notif-title').value = "";
+                document.getElementById('notif-message').value = "";
+                selectedNotifType = 'info';
+                document.querySelectorAll('.notif-type-btn').forEach(btn => {
+                    btn.classList.remove('selected-info', 'selected-event', 'selected-urgent');
+                });
+                loadNotifsAdmin();
+            } catch (error) {
+                alert("❌ Erreur : " + error.message);
+            }
+        }
+
+        async function loadNotifsAdmin() {
+            const list = document.getElementById('notifs-admin-list');
+            if (!list) return;
+            list.innerHTML = `<div class="text-center py-2 text-xs text-gray-500"><i class="fas fa-spinner animate-spin text-amber-500"></i> Chargement...</div>`;
+            
+            try {
+                const snap = await db.collection('notifications').orderBy('createdAt', 'desc').limit(10).get();
+                if (snap.empty) {
+                    list.innerHTML = `<p class="text-center text-xs text-gray-400 py-2">Aucune notification envoyée.</p>`;
+                    return;
+                }
+                list.innerHTML = "";
+                snap.forEach(doc => {
+                    const n = doc.data();
+                    const icon = n.type === 'urgent' ? '🔴' : n.type === 'event' ? '🟡' : '🟢';
+                    const date = n.createdAt ? new Date(n.createdAt.toDate()).toLocaleString('fr-FR') : '';
+                    list.innerHTML += `
+                        <div id="notif-card-${doc.id}" class="bg-gray-50 p-2 rounded-xl flex justify-between items-center gap-2 text-xs border border-gray-200">
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-800 truncate">${icon} ${n.title}</h4>
+                                <p class="text-[10px] text-gray-400 truncate">${date}</p>
+                            </div>
+                            <button onclick="deleteNotification('${doc.id}')" class="text-red-500 p-1.5 bg-red-50 rounded-lg shrink-0">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
+                        </div>`;
+                });
+            } catch (error) {
+                list.innerHTML = `<p class="text-center text-xs text-red-500 py-2">Erreur : ${error.message}</p>`;
+            }
+        }
+
+        async function deleteNotification(docId) {
+            if (!confirm("⚠️ Supprimer cette notification ?")) return;
+            try {
+                await db.collection('notifications').doc(docId).delete();
+                const element = document.getElementById(`notif-card-${docId}`);
+                if (element) element.remove();
+                alert("✅ Supprimée !");
+            } catch (error) { alert("❌ " + error.message); }
+        }
+
+        // ========== 📢 7. TICKER ==========
+        async function loadTickerAdmin() {
+            const status = document.getElementById('ticker-status');
+            const input = document.getElementById('ticker-text');
+            if (!status) return;
+            
+            try {
+                const doc = await db.collection('ticker').doc('current').get();
+                if (doc.exists) {
+                    const text = doc.data().text || '';
+                    if (input) input.value = text;
+                    status.innerHTML = text ? `✅ Ticker actif : "${text.substring(0, 50)}..."` : `ℹ️ Aucun ticker actif`;
+                } else {
+                    status.innerText = "ℹ️ Aucun ticker configuré";
+                }
+            } catch (error) {
+                status.innerText = "Erreur de chargement";
+            }
+        }
+
+        async function updateTicker() {
+            const text = document.getElementById('ticker-text').value.trim();
+            if (!text) return alert("⚠️ Le texte du ticker est vide. Utilisez le bouton × pour désactiver.");
+            
+            try {
+                await db.collection('ticker').doc('current').set({
+                    text: text,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                alert("✅ Ticker mis à jour ! Il défile maintenant chez tous les utilisateurs.");
+                loadTickerAdmin();
+            } catch (error) {
+                alert("❌ Erreur : " + error.message);
+            }
+        }
+
+        async function clearTicker() {
+            if (!confirm("⚠️ Désactiver le ticker ? Il ne sera plus visible chez les utilisateurs.")) return;
+            try {
+                await db.collection('ticker').doc('current').set({
+                    text: "",
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                }, { merge: true });
+                document.getElementById('ticker-text').value = "";
+                alert("✅ Ticker désactivé.");
+                loadTickerAdmin();
+            } catch (error) {
+                alert("❌ Erreur : " + error.message);
+            }
+        }
+
+        // ========== 8. IMPORT CSV NOTES ==========
+        function displayCSVName(event) {
+            const file = event.target.files[0];
+            const csvNameDisplay = document.getElementById('csv-file-name');
+            if (file && csvNameDisplay) {
+                csvNameDisplay.innerText = `📊 Fichier prêt : ${file.name}`;
+                csvNameDisplay.className = "text-xs font-bold text-purple-700 truncate";
+            }
+        }
+
+        async function importNotes() {
+            const fileInput = document.getElementById('csv-file');
+            if (!fileInput || fileInput.files.length === 0) return alert("⚠️ Sélectionnez un fichier .CSV");
+
+            const file = fileInput.files[0];
+            
+            Papa.parse(file, {
+                header: true, skipEmptyLines: true,
+                complete: async function(results) {
+                    const rows = results.data;
+                    if (rows.length === 0) return alert("❌ Fichier vide.");
+                    if (!('INE' in rows[0]) || !('Matiere' in rows[0]) || !('Note' in rows[0])) {
+                        return alert("❌ Colonnes obligatoires : INE, Matiere, Note");
+                    }
+                    if (!confirm(`🚀 Injecter ${rows.length} lignes ?`)) return;
+
+                    let batch = db.batch();
+                    let counter = 0;
+                    let totalSaved = 0;
+
+                    try {
+                        for (let row of rows) {
+                            const ine = row.INE ? row.INE.trim().toUpperCase() : "";
+                            const matiere = row.Matiere ? row.Matiere.trim() : "";
+                            const note = row.Note ? row.Note.trim() : "";
+                            const commentaire = row.Appreciation ? row.Appreciation.trim() : (row.commentaire ? row.commentaire.trim() : "Aucune remarque.");
+                            if (!ine || !matiere) continue;
+                            const cleanKey = `${ine}_${matiere.replace(/[^a-zA-Z0-9]/g, "_")}`;
+                            batch.set(db.collection("notes").doc(cleanKey), {
+                                ine, matiere, note, commentaire,
+                                importedAt: firebase.firestore.FieldValue.serverTimestamp()
+                            }, { merge: true });
+                            counter++; totalSaved++;
+                            if (counter === 500) { await batch.commit(); batch = db.batch(); counter = 0; }
+                        }
+                        if (counter > 0) await batch.commit();
+                        alert(`🎯 ${totalSaved} notes synchronisées !`);
+                        fileInput.value = "";
+                        document.getElementById('csv-file-name').innerText = "Cliquez pour charger le fichier .CSV";
+                    } catch (err) {
+                        alert("❌ Erreur : " + err.message);
+                    }
+                }
+            });
+        }
+
+        // ========== 9. RECHERCHE & SUPPRESSION NOTES ==========
+        async function findNote() {
+            const searchIne = document.getElementById('search-ine').value.trim().toUpperCase();
+            if (!searchIne) return alert("⚠️ Saisissez un INE.");
+            const editArea = document.getElementById('edit-area');
+            if (!editArea) return;
+            editArea.innerHTML = `<div class="text-center py-4"><i class="fas fa-spinner animate-spin text-amber-500"></i> Recherche...</div>`;
+
+            try {
+                const snapshot = await db.collection("notes").where("ine", "==", searchIne).get();
+                if (snapshot.empty) {
+                    editArea.innerHTML = `<p class="text-center text-xs text-red-500 py-4 font-bold">Aucun relevé pour : ${searchIne}</p>`;
+                    return;
+                }
+                editArea.innerHTML = "";
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    editArea.innerHTML += `
+                        <div id="card-${doc.id}" class="bg-gray-50 border border-gray-200 p-3 rounded-xl flex justify-between items-center gap-4 text-xs">
+                            <div class="flex-1 min-w-0">
+                                <h4 class="font-bold text-gray-900 truncate">📚 ${data.matiere}</h4>
+                              
