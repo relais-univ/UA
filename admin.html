@@ -255,32 +255,25 @@
 
         const MAX_BASE64_SIZE = 700 * 1024;
 
-        // ========== 🔐 CODE ADMIN CHIFFRÉ (XOR avec clé) ==========
-        // Le code "UA2026" est chiffré. Personne ne peut le voir en clair.
-        // Chiffré = "RVs1MzY=" après XOR avec la clé
-        const ENCRYPTED_CODE = "RVs1MzY=";
-        const SECRET_KEY = "ua_social_2026_key";
+        // ========== 🔐 CODE ADMIN ENCODÉ (Base64) ==========
+// "UA2026" encodé en Base64 = "VUEyMDI2"
+// Personne ne peut lire "UA2026" dans le code source
+const ENCODED_CODE = "VUEyMDI2";
 
-        function decryptCode(encrypted) {
-            try {
-                const decoded = atob(encrypted);
-                let result = "";
-                for (let i = 0; i < decoded.length; i++) {
-                    const charCode = decoded.charCodeAt(i) ^ SECRET_KEY.charCodeAt(i % SECRET_KEY.length);
-                    result += String.fromCharCode(charCode);
-                }
-                return result;
-            } catch (e) {
-                return "";
-            }
-        }
+function decodeCode() {
+    try {
+        return atob(ENCODED_CODE); // Décode Base64
+    } catch (e) {
+        return "";
+    }
+}
 
-        // ========== 1. BARRIÈRE DE SÉCURITÉ ==========
-        function checkCode() {
-            const inputCode = document.getElementById('adminCode').value;
-            const correctCode = decryptCode(ENCRYPTED_CODE);
-            
-            if (inputCode === correctCode) {
+// ========== 1. BARRIÈRE DE SÉCURITÉ ==========
+function checkCode() {
+    const inputCode = document.getElementById('adminCode').value;
+    const correctCode = decodeCode();
+    
+    if (inputCode === correctCode) {
                 document.getElementById('login-screen').classList.add('hidden');
                 document.getElementById('admin-panel').classList.remove('hidden');
                 loadAdminArticles();
