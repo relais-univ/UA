@@ -875,10 +875,9 @@ function hideOffline() {
     }
 
     // ========== ✨ POPUP GEMINI ==========
-    function showGeminiPopup() {
-        const lastShown = localStorage.getItem('ua_gemini_last_shown');
-        const now = Date.now();
-        if (lastShown && (now - parseInt(lastShown)) < 24 * 60 * 60 * 1000) return;
+function showGeminiPopup() {
+    // ✅ SUPPRIMÉ : la vérification des 24h
+    // Maintenant le popup apparaît à CHAQUE ouverture de l'app
         
         setTimeout(() => {
             const popup = document.getElementById('gemini-popup');
