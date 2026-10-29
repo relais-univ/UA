@@ -684,4 +684,39 @@
                         <div id="card-${doc.id}" class="bg-gray-50 border border-gray-200 p-3 rounded-xl flex justify-between items-center gap-4 text-xs">
                             <div class="flex-1 min-w-0">
                                 <h4 class="font-bold text-gray-900 truncate">📚 ${data.matiere}</h4>
-                              
+                                                              <p class="text-[11px] text-gray-500 italic mt-0.5">"${data.commentaire}"</p>
+                            </div>
+                            <div class="flex items-center gap-3 shrink-0">
+                                <span class="bg-amber-100 text-amber-800 font-black px-2.5 py-1 rounded-lg text-sm">${data.note}/20</span>
+                                <button onclick="deleteNote('${doc.id}')" class="text-red-500 p-2 bg-red-50 rounded-lg">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </div>`;
+                });
+            } catch (error) {
+                editArea.innerHTML = `<p class="text-center text-xs text-red-500 py-4">Erreur : ${error.message}</p>`;
+            }
+        }
+
+        async function deleteNote(docId) {
+            if (!confirm("⚠️ Supprimer cette note ?")) return;
+            try {
+                await db.collection("notes").doc(docId).delete();
+                const card = document.getElementById(`card-${docId}`);
+                if (card) card.remove();
+                alert("✅ Note supprimée.");
+            } catch (error) { alert("❌ " + error.message); }
+        }
+
+        // ========== EXPORT GLOBAL ==========
+        Object.assign(window, {
+            checkCode, updatePreview, handleFileSelect, uploadArticle,
+            loadAdminArticles, deleteArticle,
+            selectNotifType, sendNotification, loadNotifsAdmin, deleteNotification,
+            loadTickerAdmin, updateTicker, clearTicker,
+            displayCSVName, importNotes, findNote, deleteNote
+        });
+    </script>
+</body>
+</html>
