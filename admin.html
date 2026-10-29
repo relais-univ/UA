@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Administration - Faso Opportunités</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.min.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.0.0/firebase-storage-compat.js"></script>
+
+    <style>
+        .ua-green { background-color: #008751; }
+        .text-ua-green { color: #008751; }
+        .border-ua-green { border-color: #008751; }
+        .glass-lock { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(10px); }
+        .loading-spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        
+        .notif-type-btn { transition: all 0.2s; }
+        .notif-type-btn.selected-info { background: #10b981; color: white; }
+        .notif-type-btn.selected-event { background: #f59e0b; color: white; }
+        .notif-type-btn.selected-urgent { background: #dc2626; color: white; }
+    </style>
+</head>
+<body class="bg-gray-50 font-sans min-h-screen text-gray-800">
+
+    <!-- ÉCRAN DE CONNEXION SÉCURISÉ -->
+    <div id="login-screen" class="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-green-800 to-emerald-900 p-4">
+        <div class="glass-lock p-8 rounded-[30px] shadow-2xl max-w-sm w-full text-center border border-white/20">
+            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4 text-ua-green text-2xl shadow-inner">
+                <i class="fas fa-lock"></i>
+            </div>
+            <h2 class="text-2xl font-black text-gray-900 mb-2">Espace Sécurisé</h2>
+            <p class="text-xs text-gray-500 mb-6">Veuillez saisir le code administratif pour déverrouiller le panneau de contrôle.</p>
+            
+            <div class="relative mb-4">
+                <input type="password" id="adminCode" placeholder="Code secret administration" class="w-full pl-12 pr-4 py-3 bg-gray-100 border-2 border-transparent rounded-xl focus:border-green-600 focus:bg-white outline-none text-center font-bold tracking-widest">
+                <i class="fas fa-key absolute left-4 top-4 text-gray-400"></i>
+            </div>
+            <button onclick="checkCode()" class="w-full ua-green hover:bg-green-800 text-white font-bold py-3 rounded-xl transition shadow-lg active:scale-95">
+                <i class="fas fa-sign-in-alt mr-2"></i> Connexion
+            </button>
+        </div>
+    </div>
+
+    <!-- PANNEAU D'ADMINISTRATION -->
+    <div id="admin-panel" class="hidden min-h-screen flex flex-col">
+        <header class="ua-green text-white p-4 sticky top-0 z-40 shadow-md flex justify-between items-center px-6 lg:px-12">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-white rounded-full flex items-center justify-center text-xl font-black text-ua-green">UA</div>
+                <div>
+                    <h1 class="text-lg font-black tracking-wide">FASO OPPORTUNITÉS</h1>
+                    <p class="text-[10px] text-green-200 uppercase font-bold tracking-widest">Panneau de Contrôle Général</p>
+                </div>
+            </div>
+            <button onclick="location.reload()" class="bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                <i class="fas fa-sign-out-alt"></i> Quitter
+            </button>
+        </header>
+
+        <main class="flex-1 max-w-6xl w-full mx-auto p-4 lg:p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
+            
+            <!-- COLONNE GAUCHE -->
+            <div class="space-y-8">
+                <!-- SECTION : CRÉER UN ARTICLE -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-green-50 text-ua-green rounded-xl"><i class="fas fa-pen-fancy text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Créer un Article de Communauté</h2>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <input type="text" id="art-title" placeholder="Titre marquant de l'article..." class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-green-600 focus:bg-white outline-none text-sm font-semibold transition">
+                        <textarea id="art-content" rows="4" oninput="updatePreview()" placeholder="Que voulez-vous partager aujourd'hui avec les étudiants ?" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-green-600 focus:bg-white outline-none text-sm transition"></textarea>
+                        
+                        <div class="flex items-center gap-4">
+                            <label class="flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 border-2 border-dashed border-gray-300 rounded-xl p-3 px-4 cursor-pointer transition text-xs font-bold text-gray-600 shrink-0">
+                                <i class="fas fa-plus text-ua-green"></i> <span>Ajouter média</span>
+                                <input type="file" id="art-file" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
+                            </label>
+                            <span id="file-name-display" class="text-xs text-gray-400 italic truncate">Aucun fichier sélectionné</span>
+                        </div>
+                    </div>
+
+                    <div class="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-2">
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider block"><i class="fas fa-eye mr-1"></i> Aperçu en direct (Style Fil)</span>
+                        <div class="bg-white p-4 rounded-xl shadow-xs border space-y-2">
+                            <div class="flex items-center gap-2">
+                                <div class="w-8 h-8 rounded-full ua-green flex items-center justify-center text-white font-bold text-xs">UA</div>
+                                <div>
+                                    <h4 class="text-xs font-bold text-gray-800">Administration</h4>
+                                    <p class="text-[9px] text-gray-400">À l'instant • Public</p>
+                                </div>
+                            </div>
+                            <p id="preview-text" class="text-xs text-gray-600 whitespace-pre-wrap italic">Le contenu de votre publication apparaîtra ici au fur et à mesure...</p>
+                            <img id="preview-img" src="" class="hidden w-full h-40 object-cover rounded-lg mt-2 border">
+                            <p id="compression-info" class="hidden text-[10px] text-green-600 font-bold mt-1"></p>
+                        </div>
+                    </div>
+
+                    <button id="btn-publish" onclick="uploadArticle()" class="w-full ua-green hover:bg-green-800 text-white font-bold py-3 rounded-xl transition shadow flex items-center justify-center gap-2">
+                        <i class="fas fa-paper-plane"></i> Mettre en ligne l'article
+                    </button>
+
+                    <div class="mt-6 border-t pt-4">
+                        <span class="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">
+                            <i class="fas fa-trash-alt text-red-500 mr-1"></i> Gestion / Suppression des articles
+                        </span>
+                        <button onclick="loadAdminArticles()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 rounded-xl text-xs transition mb-3">
+                            <i class="fas fa-sync mr-1"></i> Charger / Rafraîchir la liste des articles
+                        </button>
+                        <div id="admin-articles-list" class="space-y-2 max-h-60 overflow-y-auto pr-1">
+                            <p class="text-center text-xs text-gray-400 italic py-2">Cliquez sur le bouton ci-dessus pour lister les publications actives.</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 🔔 NOUVELLE SECTION : CRÉER UNE NOTIFICATION -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-amber-50 text-amber-600 rounded-xl"><i class="fas fa-bell text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Créer une Notification</h2>
+                    </div>
+                    <p class="text-xs text-gray-500">Envoyez une annonce aux étudiants. Elle apparaîtra dans la cloche 🔔 avec un badge rouge.</p>
+                    
+                    <div class="space-y-3">
+                        <input type="text" id="notif-title" placeholder="Titre de la notification..." class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-amber-500 focus:bg-white outline-none text-sm font-semibold">
+                        <textarea id="notif-message" rows="3" placeholder="Message détaillé de la notification..." class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-amber-500 focus:bg-white outline-none text-sm"></textarea>
+                        
+                        <div>
+                            <p class="text-[11px] font-bold text-gray-500 uppercase mb-2">Type de notification :</p>
+                            <div class="flex gap-2">
+                                <button onclick="selectNotifType('info')" data-type="info" class="notif-type-btn flex-1 py-2 rounded-xl text-xs font-bold bg-gray-100 text-gray-700">
+                                    🟢 Info
+                                </button>
+                                <button onclick="selectNotifType('event')" data-type="event" class="notif-type-btn flex-1 py-2 rounded-xl text-xs font-bold bg-gray-100 text-gray-700">
+                                    🟡 Événement
+                                </button>
+                                <button onclick="selectNotifType('urgent')" data-type="urgent" class="notif-type-btn flex-1 py-2 rounded-xl text-xs font-bold bg-gray-100 text-gray-700">
+                                    🔴 Urgent
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="sendNotification()" class="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold py-3 rounded-xl transition shadow flex items-center justify-center gap-2">
+                        <i class="fas fa-bell"></i> Envoyer la notification
+                    </button>
+
+                    <div class="mt-4 border-t pt-3">
+                        <button onclick="loadNotifsAdmin()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold py-2 rounded-xl text-xs transition">
+                            <i class="fas fa-list mr-1"></i> Voir les notifications envoyées
+                        </button>
+                        <div id="notifs-admin-list" class="space-y-2 max-h-48 overflow-y-auto pr-1 mt-2">
+                            <p class="text-center text-xs text-gray-400 italic py-2">Cliquez pour lister</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- COLONNE DROITE -->
+            <div class="space-y-8">
+                <!-- 📢 NOUVELLE SECTION : TICKER DÉFILANT -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-red-50 text-red-600 rounded-xl"><i class="fas fa-bullhorn text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Bandeau Défilant (Ticker)</h2>
+                    </div>
+                    <p class="text-xs text-gray-500">Ce message défilera en haut de l'application (bandeau rouge animé). Laissez vide pour désactiver.</p>
+                    
+                    <textarea id="ticker-text" rows="3" placeholder="Ex: 📢 Inscriptions ouvertes jusqu'au 30 novembre !" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-red-500 focus:bg-white outline-none text-sm"></textarea>
+                    
+                    <div class="flex gap-2">
+                        <button onclick="updateTicker()" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-xl transition shadow flex items-center justify-center gap-2">
+                            <i class="fas fa-sync"></i> Mettre à jour
+                        </button>
+                        <button onclick="clearTicker()" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-3 px-4 rounded-xl transition">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+
+                    <div id="ticker-status" class="text-xs text-gray-500 italic text-center">Chargement du ticker actuel...</div>
+                </section>
+
+                <!-- SECTION : IMPORTATION MASSIVE DE NOTES -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-purple-50 text-purple-600 rounded-xl"><i class="fas fa-file-upload text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Importation Massive de Notes (CSV)</h2>
+                    </div>
+                    <div class="bg-purple-50 p-4 rounded-2xl text-xs text-purple-950 border border-purple-100 space-y-1">
+                        <p class="font-bold"><i class="fas fa-info-circle mr-1"></i> Structure obligatoire :</p>
+                        <code class="block bg-white/60 p-2 rounded mt-1 font-mono text-[11px] border border-purple-200">INE,Matiere,Note,Appreciation</code>
+                    </div>
+
+                    <div class="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center bg-gray-50 hover:bg-gray-100 transition relative">
+                        <input type="file" id="csv-file" accept=".csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="displayCSVName(event)">
+                        <div class="space-y-2">
+                            <i class="fas fa-file-csv text-4xl text-purple-400"></i>
+                            <p id="csv-file-name" class="text-xs font-bold text-gray-600">Cliquez pour charger le fichier .CSV</p>
+                        </div>
+                    </div>
+
+                    <button onclick="importNotes()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-xl transition shadow flex items-center justify-center gap-2">
+                        <i class="fas fa-database"></i> Injecter les notes
+                    </button>
+                </section>
+
+                <!-- SECTION : RECHERCHE & SUPPRESSION DE RELEVÉS -->
+                <section class="bg-white p-6 rounded-[28px] shadow-sm border border-gray-100 space-y-4">
+                    <div class="flex items-center gap-3 border-b pb-3">
+                        <div class="p-2 bg-amber-50 text-amber-600 rounded-xl"><i class="fas fa-search text-lg"></i></div>
+                        <h2 class="text-base font-bold text-gray-900">Recherche & Suppression</h2>
+                    </div>
+                    <div class="flex gap-2">
+                        <input type="text" id="search-ine" placeholder="Rechercher un INE..." class="flex-1 pl-3 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:border-amber-500 focus:bg-white outline-none text-sm font-bold uppercase">
+                        <button onclick="findNote()" class="bg-amber-500 hover:bg-amber-600 text-white font-bold px-5 rounded-xl transition shadow active:scale-95">
+                            <i class="fas fa-search"></i>
+                        </button>
+                    </div>
+                    <div id="edit-area" class="space-y-3 pt-2 max-h-60 overflow-y-auto pr-1">
+                        <p class="text-center text-xs text-gray-400 italic py-4">Aucune recherche en cours.</p>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // ========== CONFIGURATION FIREBASE ==========
+        const firebaseConfig = {
+            apiKey: "AIzaSyAlxkxSSmmt6hRqqT6qvwHuXHF2q5n-Qxk",
+            authDomain: "faso-opportunites.firebaseapp.com",
+            databaseURL: "https://faso-opportunites-default-rtdb.firebaseio.com",
+            projectId: "faso-opportunites",
+            storageBucket: "faso-opportunites.firebasestorage.app",
+            messagingSenderId: "548784260893",
+            appId: "1:548784260893:web:11894c7a8160dd76e7c3f4",
+            measurementId: "G-9J6PQBBFF8"
+        };
+        
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const db = firebase.firestore();
+
+        let selectedFile = null;
+        let compressedBase64 = null;
+        let selectedNotifType = 'info';
+
+        const MAX_BASE64_SIZE = 700 * 1024;
+
+        // ========== 🔐 CODE ADMIN CHIFFRÉ (XOR avec clé) ==========
+        // Le code "UA2026" est chiffré. Personne ne peut le voir en clair.
+        // Chiffré = "RVs1MzY=" après XOR avec la clé
+        const ENCRYPTED_CODE = "RVs1MzY=";
+        const SECRET_KEY = "ua_social_2026_key";
+
+        function decryptCode(encrypted) {
+            try {
+                const decoded = atob(encrypted);
+                let result = "";
+                for (let i = 0; i < decoded.length; i++) {
+                    const charCode = decoded.charCodeAt(i) ^ SECRET_KEY.charCodeAt(i % SECRET_KEY.length);
+                    result += String.fromCharCode(charCode);
+                }
+                return result;
+            } catch (e) {
+                return "";
+            }
+        }
+
+        // ========== 1. BARRIÈRE DE SÉCURITÉ ==========
+        function checkCode() {
+            const inputCode = document.getElementById('adminCode').value;
+            const correctCode = decryptCode(ENCRYPTED_CODE);
+            
+            if (inputCode === correctCode) {
+                document.getElementById('login-screen').classList.add('hidden');
+                document.getElementById('admin-panel').classList.remove('hidden');
+                loadAdminArticles();
+                loadTickerAdmin();
+            } else {
+                alert("🔴 Code d'accès refusé. Autorisation requise.");
+            }
+        }
+
+        // ========== 2. PRÉVISUALISATION ARTICLE ==========
+        function updatePreview() {
+            const content = document.getElementById('art-content').value;
+            const previewText = document.getElementById('preview-text');
+            if (previewText) {
+                previewText.innerText = content || "Le contenu de votre publication apparaîtra ici au fur et à mesure...";
+            }
+        }
+
+        //
